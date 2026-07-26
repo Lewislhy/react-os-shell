@@ -420,6 +420,11 @@ export function ThumbCard({ id, label, maxW, maxH, titleAbove = false, onClick, 
     clone.style.transformOrigin = 'top left';
     clone.style.pointerEvents = 'none';
     clone.style.animation = 'none';
+    // A live panel carries an inline z-index (Modal.tsx: `zIndex: pinnedOnTop ?
+    // 999 : zIndex + 1`) and the clone inherits it — which floated the snapshot
+    // over the card's own overlays and buried the close button. Flatten it; the
+    // container below also traps whatever the cloned subtree carries.
+    clone.style.zIndex = 'auto';
     clone.removeAttribute('data-modal-panel');
     clone.removeAttribute('data-modal-id');
     clone.removeAttribute('data-window-key');
@@ -435,7 +440,10 @@ export function ThumbCard({ id, label, maxW, maxH, titleAbove = false, onClick, 
       className="relative rounded-md overflow-hidden bg-white/95 border border-gray-300 shadow-md cursor-pointer ring-2 ring-transparent group-hover:ring-blue-400 transition shrink-0"
       onClick={onClick}
     >
-      <div ref={previewRef} className="absolute inset-0 overflow-hidden" />
+      {/* `z-0` makes the snapshot layer its own stacking context, so no z-index
+          inside the cloned window (a pinned panel, a sticky header, a dropdown)
+          can climb over the card's title strip or close button. */}
+      <div ref={previewRef} className="absolute inset-0 z-0 overflow-hidden" />
       {!hasSnapshot && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-gray-50">
           <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -445,14 +453,14 @@ export function ThumbCard({ id, label, maxW, maxH, titleAbove = false, onClick, 
         </div>
       )}
       {!titleAbove && (
-        <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] font-medium text-white bg-gradient-to-t from-black/80 to-transparent truncate pointer-events-none">
+        <div className="absolute bottom-0 left-0 right-0 z-10 px-2 py-1 text-[10px] font-medium text-white bg-gradient-to-t from-black/80 to-transparent truncate pointer-events-none">
           {label}
         </div>
       )}
       {onClose && (
         <button
           onClick={(e) => { e.stopPropagation(); onClose(); }}
-          className="absolute top-1 right-1 h-5 w-5 rounded-full bg-gray-900/90 ring-1 ring-white/80 shadow-sm hover:bg-red-500 text-white flex items-center justify-center"
+          className="absolute top-1 right-1 z-20 h-5 w-5 rounded-full bg-gray-900/90 ring-1 ring-white/80 shadow-sm hover:bg-red-500 text-white flex items-center justify-center"
           title="Close window"
         >
           <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.0.1] — 2026-07-26
+
+### Fixed
+- **Taskbar preview: the close (×) button is reachable again.** The window
+  snapshot inside a preview card is a clone of the live panel, and it kept that
+  panel's inline `z-index` — so it painted over the card's own overlays and hid
+  the × button (and the title strip) behind it. The snapshot layer is now its
+  own stacking context, so nothing inside a cloned window can climb over the
+  card chrome.
+
 ## [4.0.0] — 2026-07-24
 
 ### Removed
