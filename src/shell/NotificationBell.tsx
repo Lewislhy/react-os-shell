@@ -50,6 +50,17 @@ function timeAgo(dateStr: string): string {
   return formatDate(dateStr);
 }
 
+/** How long the pop-up card stays up. It used to be a flat 5s, which was
+ *  fine while the card clipped everything to one line — now that it shows
+ *  the whole message, a five-line notification needs longer than five
+ *  seconds or it vanishes mid-sentence. ~15 chars/sec ≈ 200 wpm, floored at
+ *  the old 5s so short notifications behave exactly as before, and capped so
+ *  a long one never parks on screen. */
+export function readingTimeMs(notif: ShellNotification): number {
+  const chars = (notif.title?.length ?? 0) + (notif.message?.length ?? 0);
+  return Math.min(12000, Math.max(5000, Math.round(chars / 15) * 1000));
+}
+
 interface NotificationBellProps extends NotificationsConfig {
   popDirection?: 'left' | 'right';
 }
@@ -97,7 +108,7 @@ export default function NotificationBell({
     if (inlineTimerRef.current) { clearTimeout(inlineTimerRef.current); inlineTimerRef.current = null; }
     setInlineNotif(null);
   }, []);
-  const showInlineNotif = useCallback((notif: ShellNotification, durationMs = 5000) => {
+  const showInlineNotif = useCallback((notif: ShellNotification, durationMs = readingTimeMs(notif)) => {
     setInlineNotif(notif);
     playNotification();
     if (inlineTimerRef.current) clearTimeout(inlineTimerRef.current);
@@ -260,11 +271,17 @@ export default function NotificationBell({
               <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
             </svg>
           </div>
-          <div className="flex-1 min-w-0">
+          {/* Title and message wrap to as many lines as they need — the card
+              grows instead of clipping, so the notification is readable
+              without opening it. max-h is only a runaway guard (a very long
+              message can't push the dismiss X off-screen); normal ones never
+              reach it. break-words keeps an unbroken token (URL, long ref)
+              from overflowing the 320px card. */}
+          <div className="flex-1 min-w-0 max-h-[60vh] overflow-y-auto">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-600 mb-0.5">Notification</div>
-            <div className="text-sm font-medium text-gray-800 leading-snug truncate">{inlineNotif.title}</div>
+            <div className="text-sm font-medium text-gray-800 leading-snug break-words">{inlineNotif.title}</div>
             {inlineNotif.message && (
-              <div className="text-xs text-gray-500 leading-snug truncate mt-0.5">{inlineNotif.message}</div>
+              <div className="text-xs text-gray-500 leading-snug break-words mt-0.5">{inlineNotif.message}</div>
             )}
           </div>
           <button

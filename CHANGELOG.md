@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.0.2] — 2026-07-26
+
+### Fixed
+- **The pop-up notification card shows the whole message instead of one
+  clipped line.** Both the title and the body were `truncate`d, so anything
+  past ~40 characters became an ellipsis ("Support replied to your repor…")
+  and the notification had to be opened to be read at all. They now wrap, and
+  the card grows to fit. Long unbroken tokens (URLs, references) break rather
+  than overflow, and the text column caps at `60vh` as a runaway guard so an
+  unusually long message can't push the dismiss button off-screen.
+- **The card now stays up long enough to read.** Auto-dismiss was a flat 5s,
+  which suited a one-line card but not a five-line one. It now scales with the
+  length of the text (~200 wpm), floored at the old 5s so short notifications
+  are unchanged and capped at 12s so a long one never parks on screen.
+
 ## [4.0.1] — 2026-07-26
 
 ### Fixed
