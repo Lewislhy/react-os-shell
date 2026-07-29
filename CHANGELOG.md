@@ -4,6 +4,96 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-07-29
+
+### Added
+- **Undo and Redo for a whole form: `UndoProvider`, `useUndoable`, `useUndo`,
+  `UndoControls`.** A form window gets one undo stack covering everything in it
+  — its fields, its line items, a bulk import. ⌘Z steps back the last thing the
+  user did, whatever part of the form it happened in, and Redo walks forward
+  again. Two open windows keep two independent stacks, so the keys never reach
+  into a window the user is not looking at.
+
+  Wrap the form, then register each piece of its state. `apply` is the setter
+  the form already uses, so nothing about how state is stored has to change:
+
+  ```tsx
+  <UndoProvider>
+    <PurchaseOrderForm />
+  </UndoProvider>
+
+  // inside the form
+  useUndoable(supplier, setSupplier, { label: 'supplier', coalesceKey: 'supplier' });
+  useUndoable(items, setItems, { label: 'line items' });
+
+  const { clear } = useUndo();     // call after a successful save
+  <UndoControls />                 // optional — the keys work without it
+  ```
+
+  A step snapshots **every** registered slice, not just the one that moved, so
+  undoing restores a coherent form rather than one slice out of step with the
+  rest. One user action that moves several slices at once — a bulk import fills
+  the line items and closes the grid — is still one step: the slices' effects
+  all run before the recording microtask, so the first captures the snapshot and
+  the rest join it. Depth is 100 steps.
+
+  `coalesceKey` folds a run of changes into one step: pass the field name and a
+  burst of typing becomes a single Undo rather than one per keystroke. Omit it
+  for a change that is already whole, like an import or a deleted row.
+
+  **Every window gets a stack without asking.** `WindowManager` mounts one
+  `UndoProvider` per open window, so a form only has to register its state — and
+  the stack is torn down with the window, which is right, because history is the
+  unsaved edit. It costs nothing until something registers. A read-only form
+  nests its own `<UndoProvider canEdit={false}>` to shadow it.
+
+  **`useUndoableState` is `useState` with the value in the stack**, so adopting a
+  form is a rename rather than an added line per field — which matters, because
+  the forms this is for hold their state in dozens of separate `useState` calls
+  and one of them has forty-three:
+
+  ```tsx
+  const [supplier, setSupplier] = useState('');                                // out
+  const [supplier, setSupplier] = useUndoableState('', { label: 'supplier' }); // in
+  ```
+
+  That also makes the choice legible: state left as plain `useState` is state
+  deliberately kept out of the history. Keep it there for anything that is not
+  the user's input — a search box, fetched data, validation output, an
+  initialisation guard. Undoing those puts stale results back on screen, and a
+  reverted guard can re-fire the effect it exists to suppress.
+
+  ⌘Z / Ctrl+Z undoes and ⇧⌘Z / Ctrl+Shift+Z / Ctrl+Y redoes, bound by the
+  provider so the keys work in a form that shows no controls at all — **except
+  while the caret is in an input, a textarea, a select, or a grid cell**. There
+  ⌘Z means "take back what I just typed" and the browser already does that;
+  leaving the field ends the run and turns it into one step here, so the next ⌘Z
+  outside the field takes the whole edit back. The keys are also left alone when
+  there is nothing to step to, rather than being swallowed into a no-op. Both
+  appear in `ShortcutHelp` under Modals / Forms.
+
+  **Scope is the unsaved edit.** History lives with the mounted provider and dies
+  with it, and `clear()` ends it at a save — past that point "earlier" is on the
+  server, and taking it back is not something a form can do.
+
+  **Everyone who may edit the record gets it.** Undo is not a privileged
+  feature — the user most helped by one is the one least sure of what they just
+  did — so it is gated on edit rights and nothing else. `<UndoProvider canEdit>`
+  takes the form's own read-only flag; `perms` checks codes through
+  `ShellAuthProvider` when the form would rather not work it out itself. Both
+  are combined, so a form that already knows it is read-only stays that way. For
+  a reader the controls render nothing at all rather than sitting there dead,
+  the keys are not bound, and no history is recorded.
+
+### Fixed
+- **`BulkImportGrid` no longer strips spaces and commas out of text columns on
+  import.** `handleImport` ran every column but the first through the number
+  cleaner, which exists to drop currency symbols and thousands separators from a
+  price. Applied to a `kind: 'text'` column it deleted content: a description
+  pasted as `Gunmetal 19" Alloy Wheel` was imported as `Gunmetal19"AlloyWheel`,
+  silently, on every import that carried one. Cleaning now follows the column's
+  declared `kind` — `price` and `qty` only — via the `colKind()` the rest of the
+  component already resolves columns with.
 ## [4.2.2] — 2026-07-29
 
 ### Fixed

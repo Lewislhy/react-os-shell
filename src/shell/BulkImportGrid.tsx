@@ -512,12 +512,15 @@ export default function BulkImportGrid({ columns, onImport, description, mergeDu
     const cleaned = data.map(row => {
       const r = [...row];
       while (r.length < colCount) r.push('');
-      return r.slice(0, colCount).map((cell, i) => i === 0 ? cell : cleanNumber(cell));
+      return r.slice(0, colCount).map((cell, i) => {
+        const kind = colKind(columns[i], i);
+        return kind === 'price' || kind === 'qty' ? cleanNumber(cell) : cell;
+      });
     });
     // Pad to minimum rows
     while (cleaned.length < 15) cleaned.push(Array(colCount).fill(''));
     setGridData(cleaned);
-  }, [colCount]);
+  }, [colCount, columns]);
 
   const handleCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -560,7 +563,10 @@ export default function BulkImportGrid({ columns, onImport, description, mergeDu
         const obj: Record<string, string> = {};
         columns.forEach((col, i) => {
           const val = row[i]?.trim() || '';
-          obj[col.key] = i === 0 ? val : cleanNumber(val);
+          // Currency symbols and thousands separators are noise in a number and
+          // content in a description — strip them only where they're noise.
+          const kind = colKind(col, i);
+          obj[col.key] = kind === 'price' || kind === 'qty' ? cleanNumber(val) : val;
         });
         return obj;
       });
