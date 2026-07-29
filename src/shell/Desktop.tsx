@@ -4,6 +4,7 @@ import { useWindowManager } from './WindowManager';
 import { useShellPrefs } from './ShellPrefs';
 import Modal from './Modal';
 import WidgetManager from './WidgetManager';
+import PerfStats from './PerfStats';
 import { APP_VERSION } from '../version';
 import changelog, { type ChangelogEntry } from '../changelog';
 import toast from './toast';
@@ -1366,6 +1367,33 @@ export default function Desktop({ profile }: { profile: any }) {
             )}
           </div>
         </Modal>
+        );
+      })()}
+
+      {/* Performance HUD — opt-in diagnostic, parked in the same corner as the
+          version watermark: one row above it when both show, in its slot when
+          the watermark is off. z-[240] floats it over windows (which stack
+          below the taskbar's z-[250]) but under every piece of shell chrome,
+          so it stays readable while you drag a window around — which is when
+          the jank worth measuring actually happens. */}
+      {prefs.show_desktop_stats === true && (() => {
+        const versionShowing = prefs.show_desktop_version === true && !!(host.productVersion ?? APP_VERSION);
+        const taskbarAtBottom = prefs.taskbar_position !== 'top'
+          && prefs.taskbar_position !== 'left'
+          && prefs.taskbar_position !== 'right';
+        const side = prefs.taskbar_position === 'right' ? 'left-3' : 'right-3';
+        // Standard spacing steps only — no arbitrary values. These class names
+        // have to survive whatever Tailwind build each consuming portal runs,
+        // and an arbitrary `bottom-[5.5rem]` silently resolves to nothing if a
+        // consumer's scan misses the shell's dist. The stacked offsets simply
+        // clear the watermark sitting below.
+        const bottom = taskbarAtBottom
+          ? (versionShowing ? 'bottom-24' : 'bottom-16')
+          : (versionShowing ? 'bottom-8' : 'bottom-3');
+        return (
+          <div className={`absolute z-[240] ${side} ${bottom}`}>
+            <PerfStats onClose={() => saveShellPrefs({ show_desktop_stats: false })} />
+          </div>
         );
       })()}
 

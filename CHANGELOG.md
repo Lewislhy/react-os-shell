@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.2.0] — 2026-07-29
+
+### Added
+- **A desktop performance HUD that says *where* the UI is slow, not just that
+  it is.** New `Preferences → Customization → Diagnostics → Show performance
+  stats` overlays frame rate, mean and worst frame time, main-thread blocked
+  share and JS heap in the desktop corner beside the version watermark, and
+  turns them into a verdict: smooth, GPU-bound, or CPU-bound. The
+  discriminator is late frames against an idle main thread — if JavaScript
+  were the problem the thread would be busy, so dropped frames plus an idle
+  thread put the cost downstream of script, in compositing and paint. That is
+  the signature the shell's own frosted glass produces (`glassStyle()` blurs
+  at a 40px radius on every menu, modal and popup), and it is invisible in a
+  JS profile, so a GPU verdict points straight at `Reduce transparency` — the
+  switch that strips `backdrop-filter` everywhere. The toggle sits directly
+  under that switch on purpose: one is the usual fix for a sluggish machine,
+  the other tells you whether it was the right fix. Motivated by a portal
+  reported as laggy on a fanless MacBook Air, whose 8–10 core GPU does the
+  same blur work a 40-core M3 Max hides.
+- Attribution is exported as pure functions (`classifyPerf`,
+  `summariseFrames`) alongside the `PerfStats` component, and specced. Where
+  the browser exposes no `longtask` observer — Safari — a low frame rate is
+  reported as **unattributed rather than as the GPU**: that case is
+  indistinguishable from genuine compositing cost, and a confident wrong
+  answer is worse than none when someone is about to change settings on the
+  strength of it.
+- **A session log, so a slow machine somewhere else can produce evidence
+  instead of an adjective.** While the HUD is on, every reading is recorded
+  with the context around it: how many windows were open, which one was on
+  top, and counts of clicks, keystrokes, scrolls and milliseconds spent
+  dragging. Dragging gets its own axis because it is the most
+  compositing-heavy thing a user can do in a window shell. The overlay
+  exports the log as JSON (with the analysis included, so the recipient gets
+  the conclusion without rerunning it) or as flat CSV for a spreadsheet.
+  `summarisePerfLog` reports median frame rate split by idle versus
+  interacting, bucketed by open-window count, and ranked worst-first by
+  window — turning "it feels laggy" into "the Sales Invoice window runs at 18
+  fps with six windows open". Medians, not means, so one 400ms stall cannot
+  drag the number somewhere no frame ever was; and groups below a
+  four-sample floor are withheld rather than reported thinly, since one
+  unlucky reading is not a finding. Only readings with a real frame rate
+  enter a median — a sample taken while the thread was too blocked to deliver
+  frames carries fps 0 and would otherwise report a rate the display never
+  showed.
+- The log is capped at ~20 minutes, mirrored to `localStorage` on a throttle,
+  and flushed on `pagehide`/`visibilitychange` and on unmount — the unsaved
+  tail is exactly the part someone was watching when they gave up and closed
+  the tab. It records counts and window keys only: no page content and no
+  keystroke text. It stays on the device unless the user exports it, and the
+  Preferences copy says so.
+- The HUD is built not to distort what it measures: the `requestAnimationFrame`
+  sampler writes to refs and never sets state, so the panel re-renders twice a
+  second rather than per frame, and it is the one surface in the shell that
+  deliberately takes no `backdrop-filter` — a perf overlay costing a 40px blur
+  would add the very load it exists to attribute. Note that a running rAF loop
+  does keep the browser compositing, so readings are meaningful while the UI is
+  in use, which is also when the jank worth measuring happens.
+
 ## [4.1.5] — 2026-07-29
 
 ### Fixed
