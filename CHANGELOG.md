@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.2.1] — 2026-07-29
+
+### Fixed
+- **The performance overlay had no findable entrance.** 4.2.0 put its only
+  switch at the very bottom of Preferences → Customization → Appearance,
+  below Theme, Desktop Wallpaper and six transparency sliders — measured at
+  646px past the fold in a 684px-tall pane, so it was never on screen when
+  the panel opened. A diagnostic exists to be found by someone who is already
+  frustrated, which makes "scroll a full screen through settings you did not
+  come here for" the wrong and only way in. The desktop right-click menu now
+  carries **Show / Hide Performance Stats**, next to Manage Widgets — the
+  same surface the overlay itself appears on. The label reflects the current
+  state, and the Preferences switch stays where it is for anyone who goes
+  looking there.
+- This matters most where the shell is embedded: the admin portal hides the
+  `customization`, `favorites` and `about` items from that menu, so its users
+  could not reach Preferences from the desktop at all. The new item is a
+  separate `'perf-stats'` key in `DesktopContextMenuItem`, so a consumer that
+  wants it gone can hide it the same way — but nobody has to opt in to get it.
+
 ## [4.2.0] — 2026-07-29
 
 ### Added

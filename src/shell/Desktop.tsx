@@ -72,8 +72,9 @@ export type StickyResolver = (prefix: string, number: string) => Promise<StickyE
 /** Optional items in the desktop right-click menu that a consumer can hide via
  *  {@link DesktopHostConfig.hiddenContextMenuItems} — e.g. when they're surfaced
  *  under Preferences instead. `'customization'` is the Preferences/Customization
- *  shortcut, `'favorites'` the Favorites shortcut, `'about'` the About item. */
-export type DesktopContextMenuItem = 'customization' | 'favorites' | 'about';
+ *  shortcut, `'favorites'` the Favorites shortcut, `'about'` the About item,
+ *  `'perf-stats'` the performance-overlay toggle. */
+export type DesktopContextMenuItem = 'customization' | 'favorites' | 'about' | 'perf-stats';
 
 export interface DesktopHostConfig {
   /** Product name shown in the About dialog and desktop context menu. */
@@ -1235,6 +1236,19 @@ export default function Desktop({ profile }: { profile: any }) {
             <svg className="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></svg>
             Manage Widgets…
           </PopupMenuItem>
+          {/* Performance overlay toggle. It lives here, next to the other
+              desktop-surface items, because the Preferences switch alone was
+              not a findable entrance: it sits last in the Appearance pane,
+              below Theme, Wallpaper and six transparency sliders — about a
+              screen's worth of scrolling past the fold. A diagnostic has to be
+              reachable by someone who is already frustrated, and that means
+              right where the overlay itself appears. */}
+          {!hiddenMenuItems.includes('perf-stats') && (
+            <PopupMenuItem onClick={() => { setContextMenu(null); saveShellPrefs({ show_desktop_stats: prefs.show_desktop_stats !== true }); }}>
+              <svg className="h-4 w-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 20.25V15m5.25 5.25V9.75m5.25 10.5V4.5m5.25 15.75v-7.5" /></svg>
+              {prefs.show_desktop_stats === true ? 'Hide Performance Stats' : 'Show Performance Stats'}
+            </PopupMenuItem>
+          )}
           {!(hiddenMenuItems.includes('customization') && hiddenMenuItems.includes('favorites') && hiddenMenuItems.includes('about')) && <PopupMenuDivider />}
           {!hiddenMenuItems.includes('customization') && (
             <PopupMenuItem onClick={() => { setContextMenu(null); openPage('/settings/customization'); }}>
