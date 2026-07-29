@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.2.2] — 2026-07-29
+
+### Fixed
+- **`autoHeight` windows with a `<ModalActions>` footer opened exactly one
+  footer-height too short** — last row cut off behind a needless scrollbar,
+  identically on every reopen (admin portal's Edit User modal, measured at a
+  stable 53px shortfall). The footer element mounts `hidden` and only un-hides
+  after `ModalActions` flips `hasActions` from a passive effect — *after* the
+  measurement's layout effect read `chrome = panel − body` — so the measured
+  chrome was missing the footer, and nothing re-measured: the footer sits
+  outside the body, invisible to both the content-root ResizeObserver and the
+  body MutationObserver. The measurement now re-runs in the same commit that
+  un-hides the footer (footer visibility is an effect dependency), the
+  ResizeObserver additionally watches the footer element while unresolved,
+  and the freeze takes one final measure before resolving so a footer landing
+  in the very last frame can't be missed. The masking subtlety: on
+  classic-scrollbar platforms the transient scrollbar re-wrapped the content
+  and self-healed the height, which is why the bug only presented on
+  overlay-scrollbar macOS.
+- A footer that (dis)appears **after** the height has frozen — `ModalActions`
+  inside a lazy/slow body, or conditionally rendered `footer`/`actions` — now
+  nudges the frozen height by exactly the footer's delta, keeping the body's
+  height (and a deliberate user resize) intact instead of silently costing
+  the body the footer's height.
+- Demo: new "Auto height (actions footer)" repro window in Window Styles,
+  fixed-width on purpose so it reproduces in both scrollbar modes.
+
 ## [4.2.1] — 2026-07-29
 
 ### Fixed
