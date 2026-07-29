@@ -6,13 +6,43 @@
  * re-exports.
  */
 
+/** `data:image/svg+xml;base64,…` → captures the `image` type and `svg+xml` subtype. */
+const DATA_URL_RE = /^data:([a-z0-9!#$&^_.+-]+)\/([a-z0-9!#$&^_.+-]+)/i;
+
+/**
+ * Name a `data:` URL from its media type alone, never its payload.
+ *
+ * A data URL carries no path, so the generic derivation below would slice at
+ * the `/` inside the media type and hand back the whole base64 body as the
+ * "filename" — hundreds of kilobytes, straight into an `alt` attribute.
+ *
+ *   "data:image/png;base64,iVBORw0KGgo…"      →  "image.png"
+ *   "data:image/svg+xml;base64,PHN2Zy…"       →  "image.svg"
+ *   "data:image/vnd.microsoft.icon;base64,…"  →  "image.icon"
+ *   "data:,hello"  (no media type)            →  "media"
+ */
+function dataUrlName(url: string): string {
+  const m = DATA_URL_RE.exec(url);
+  if (!m) return 'media';
+  const [, type, subtype] = m;
+  // `svg+xml` → `svg` (drop the structured-syntax suffix), then take the last
+  // dot-segment of a tree'd subtype (`vnd.microsoft.icon` → `icon`) and shed a
+  // vendor/experimental `x-` prefix (`x-icon` → `icon`).
+  const ext = subtype.split('+')[0].split('.').pop()!.replace(/^x-/i, '');
+  return ext ? `${type.toLowerCase()}.${ext.toLowerCase()}` : 'media';
+}
+
 /**
  * Derive a human filename from a media URL: drop the query string, strip a
  * 32-hex upload prefix, and URL-decode.
  *
  *   "/media/uploads/9f3…a1_My Clip.mp4?v=2"  →  "My Clip.mp4"
+ *
+ * `data:` URLs have no path, so they are named from their media type instead
+ * — see `dataUrlName`.
  */
 export function mediaFileName(url: string): string {
+  if (/^data:/i.test(url || '')) return dataUrlName(url);
   const path = (url || '').split('?')[0].split('#')[0];
   const last = path.substring(path.lastIndexOf('/') + 1);
   try {
