@@ -391,6 +391,19 @@ export const modalDepthRef = { get: () => modalDepth, inc: () => ++modalDepth, d
 // Activation order — last element is the frontmost modal
 const activationOrder: string[] = [];
 const activeListeners = new Set<() => void>();
+
+// Bumped by every change to the activation order, and read as the snapshot by
+// `useIsActiveWindow`. The frontmost modal id is not enough on its own: a
+// window can mount *behind* the active one (a restored z-order slots it into
+// the middle of the stack), which changes the answer for that window without
+// changing the frontmost id — and `useSyncExternalStore` compares snapshots,
+// so an unchanged id means no re-render and a stale reading.
+let _activeVersion = 0;
+function getActiveVersion() { return _activeVersion; }
+function notifyActive() {
+  _activeVersion++;
+  activeListeners.forEach(fn => fn());
+}
 // Bi-directional map between live (random per-mount) modalIds and stable
 // window keys (`windowKey || copyText`). Stable keys outlive page refreshes
 // and let us slot remounted modals back into their previous z-order.
@@ -422,7 +435,7 @@ export function mountModal(modalId: string, key: string | null) {
       _saveOrderDebounced();
     }
   }
-  activeListeners.forEach(fn => fn());
+  notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
 }
 
@@ -437,7 +450,7 @@ export function activateModal(id: string) {
     _activationOrderKeys.push(key);
     _saveOrderDebounced();
   }
-  activeListeners.forEach(fn => fn());
+  notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
 }
 
@@ -449,7 +462,7 @@ function _minimizeModal(modalId: string) {
     const kidx = _activationOrderKeys.indexOf(key);
     if (kidx !== -1) { _activationOrderKeys.splice(kidx, 1); _saveOrderDebounced(); }
   }
-  activeListeners.forEach(fn => fn());
+  notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
 }
 
@@ -466,7 +479,7 @@ export function deactivateAllModals() {
     return mid != null && widgetIds.has(mid);
   });
   _saveOrderDebounced();
-  activeListeners.forEach(fn => fn());
+  notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
 }
 // ── Window snapping ──────────────────────────────────────────────────────
@@ -738,6 +751,42 @@ function runEscapeInterceptors(e: KeyboardEvent): boolean {
 function useIsActiveModal(modalId: string): boolean {
   const activeId = useSyncExternalStore(subscribeActive, getActiveModalId);
   return activationOrder.length <= 1 || activeId === modalId;
+}
+
+/**
+ * Is the window identified by `windowKey` the frontmost one?
+ *
+ * For anything that binds a global shortcut from *outside* the `<Modal>` it
+ * belongs to — `UndoProvider` is mounted a level above `PageWindow`, so it has
+ * no `ModalActionsContext` to read and cannot use {@link useModalActive}, whose
+ * fallback path is made of module globals and therefore answers identically for
+ * every caller. That fallback is fine for "is any window active"; it is useless
+ * for "is *mine* active", and a per-window listener that asks the wrong
+ * question fires in every window at once.
+ *
+ * `windowKey` is the stable key a window passes to `<Modal windowKey=...>` —
+ * `WindowManager`'s `item.id` — not the private per-mount `modalId` that
+ * `activationOrder` actually holds. The two are mapped by `mountModal`, and
+ * resolving through that map is the whole point: `useIsActiveModal(item.id)`
+ * would compare a window key against a `modal-xxxxxx` id and be false for every
+ * window rather than true for every window.
+ *
+ * Omit `windowKey` — or pass one no mounted modal has claimed, which is the
+ * case for a `rendersOwnModal` window whose inner `<Modal>` sets no
+ * `windowKey` — and this degrades to {@link useModalActive}: the enclosing
+ * `<ModalActions>` context if there is one, the global test if there is not.
+ */
+export function useIsActiveWindow(windowKey?: string | null): boolean {
+  // Subscribed for invalidation only. The reading below is computed from the
+  // live module state, which this version stamp tracks in full.
+  useSyncExternalStore(subscribeActive, getActiveVersion);
+  const ctx = useContext(ModalActionsContext);
+  if (activationOrder.length <= 1) return true;
+  if (windowKey) {
+    const modalId = _modalIdByKey.get(windowKey);
+    if (modalId != null) return getActiveModalId() === modalId;
+  }
+  return ctx?.active ?? getActiveModalId() != null;
 }
 
 // ── Exposé / Mission-Control mode ─────────────────────────────────────────
@@ -1349,7 +1398,7 @@ export default function Modal({ open, onClose, title, icon, copyText, size = 'lg
       const idx = modalStack.indexOf(modalId);
       if (idx !== -1) modalStack.splice(idx, 1);
       const aidx = activationOrder.indexOf(modalId);
-      if (aidx !== -1) { activationOrder.splice(aidx, 1); activeListeners.forEach(fn => fn()); }
+      if (aidx !== -1) { activationOrder.splice(aidx, 1); notifyActive(); }
       const cleanupKey = _keyByModalId.get(modalId);
       if (cleanupKey) { _keyByModalId.delete(modalId); _modalIdByKey.delete(cleanupKey); }
       window.removeEventListener('modal-reorder', onReorder);

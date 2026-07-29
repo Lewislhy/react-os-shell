@@ -4,6 +4,72 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.3.1] — 2026-07-29
+
+### Fixed
+- **⌘Z undid in every open window at once.** 4.3.0 claimed two open windows keep
+  two independent stacks; they did not. `UndoProvider` asked `useModalActive()`
+  whether it was frontmost, but `WindowManager` mounts it *above* `PageWindow`
+  and therefore above the `<Modal>` that provides that context — so the hook
+  fell through to a fallback made entirely of module globals, which answers the
+  same for every caller and is true whenever any window is active. Each window
+  also binds its own `keydown` on `window`, with nothing to tell one window's
+  press from another's. One ⌘Z therefore stepped back every open window that had
+  history, silently reverting edits behind the one the user was looking at.
+
+  `UndoProvider` now takes a `windowId` and asks a new `useIsActiveWindow(key)`
+  hook, which resolves the window's stable key through the same map `Modal` fills
+  in when it mounts. `WindowManager` passes `item.id` — the value its `<Modal>`
+  already gets as `windowKey`. A provider given no id, or an id no mounted modal
+  has claimed, keeps the previous behaviour.
+
+  The feature was inert on 4.3.0 — nothing in the shell or the portals registers
+  a slice yet — so no released form could have hit this.
+
+- **A record arriving from the server was recorded as an undoable step**, so the
+  first ⌘Z after a window finished loading handed back the empty form. `useUndo()`
+  now returns `baseline()`, which marks the loaded values as the starting point.
+  Call it in the same effect that assigns them:
+
+  ```tsx
+  const { baseline } = useUndo();
+  useEffect(() => {
+    if (!data) return;
+    setSupplier(data.supplier); setItems(data.items);
+    baseline();
+  }, [data]);
+  ```
+
+  It suspends recording for that one commit rather than only clearing after the
+  fact, because the assigned values land in the commit the call schedules. Safe
+  to call on every arrival, including a refetch into an open window.
+
+- **A slice registered with a derived value could hang the tab.** `useUndoable`
+  detects change by identity, so `useUndoable(rows.filter(r => r.on), …)` reads
+  as changed on every render — and recording a step re-renders the form, closing
+  the loop. Its recording effect now runs on a value change rather than on every
+  render, and the provider trips a guard, names the slice and stops recording if
+  steps arrive at a rate no user could produce. A dead undo stack with a console
+  error can be diagnosed; a frozen tab cannot.
+
+### Added
+- `useIsActiveWindow(windowKey)` is exported: "is this window frontmost?", asked
+  by stable window key, for anything binding a global shortcut from outside the
+  `<Modal>` it belongs to. `useModalActive()` is unchanged and still right for
+  anything inside one.
+
+### Testing
+- **The React half of undo now has specs** — the half that shipped untested, and
+  the reason both bugs above got through. `tests/UndoProvider.test.tsx` covers
+  two-window isolation (it fails on 4.3.0), redo scoping, the load-then-undo
+  case, the runaway guard, and the in-field and nothing-to-undo contracts with
+  real key events.
+
+  This needed a DOM: `renderToStaticMarkup` runs no effects, so a provider whose
+  whole job happens in one was invisible to it. `jsdom` is a new devDependency
+  and `tests/dom.ts` a small harness over it — a DOM, not a test framework;
+  `node:test` and `assert` are still the whole of the runner.
+
 ## [4.3.0] — 2026-07-29
 
 ### Added

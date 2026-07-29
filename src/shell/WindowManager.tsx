@@ -1048,8 +1048,14 @@ export function WindowManagerProvider({ children, windowAccentForRoute }: {
                 torn down with the window — history is the unsaved edit, and a
                 closed window has none. Costs nothing until something registers
                 through useUndoable/useUndoableState. A read-only form nests its
-                own <UndoProvider canEdit={false}> to shadow this one. */}
-            <UndoProvider>
+                own <UndoProvider canEdit={false}> to shadow this one.
+
+                `windowId` is what keeps the stacks apart. The provider sits
+                above the <Modal> and so cannot see it, and its ⌘Z listener is
+                on `window` and so hears every press in every window; the id is
+                how this one recognises a press as its own. It is the same
+                value the Modal gets as `windowKey` below. */}
+            <UndoProvider windowId={item.id}>
               {item.type === 'page' ? (
                 <PageWindow item={item} onClose={() => closeEntity(item.id)} accentRgb={accentRgb} />
               ) : (

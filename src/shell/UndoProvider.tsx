@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState } from 'react';
-import { useModalActive } from './Modal';
+import { useIsActiveWindow } from './Modal';
 import { useShellAuth } from './ShellAuth';
 import {
   undoReducer,
@@ -24,6 +24,7 @@ interface UndoContextValue {
   undo: () => void;
   redo: () => void;
   clear: () => void;
+  baseline: () => void;
   canUndo: boolean;
   canRedo: boolean;
   undoLabel: string | null;
@@ -32,6 +33,20 @@ interface UndoContextValue {
 }
 
 const UndoContext = createContext<UndoContextValue | null>(null);
+
+/**
+ * Runaway detection: this many steps in a row, with no pause longer than
+ * {@link RUNAWAY_QUIET_MS} between any two of them, is a render loop.
+ *
+ * Counting per fixed window would be the obvious thing and is the wrong one —
+ * a loop slow enough to straddle the window resets the count on every pass and
+ * never trips, which is precisely the machine where the hang is worst. A run
+ * only resets on a genuine gap, so what trips it is a *sustained* rate rather
+ * than a peak, and a slower machine takes longer to get there rather than
+ * getting away with it.
+ */
+const RUNAWAY_LIMIT = 500;
+const RUNAWAY_QUIET_MS = 250;
 
 export interface UndoProviderProps {
   children: React.ReactNode;
@@ -48,6 +63,21 @@ export interface UndoProviderProps {
    * `canEdit` alone.
    */
   perms?: string[];
+  /**
+   * The window this stack belongs to — the same stable key its `<Modal>` gets
+   * as `windowKey`, which for a `WindowManager` window is `item.id`.
+   *
+   * This is what keeps ⌘Z inside the window the user is looking at. The
+   * provider binds its hotkey on `window`, so every open window's provider sees
+   * every keypress; the id is how one of them recognises the press as its own.
+   * Without it there is no per-window identity to test and the best available
+   * answer is "is any window active", which is true in all of them at once.
+   *
+   * Omit it for a provider nested inside a `<Modal>` — there the enclosing
+   * modal's own context answers the question — or where there are no windows
+   * at all.
+   */
+  windowId?: string;
 }
 
 /**
@@ -56,19 +86,26 @@ export interface UndoProviderProps {
  * Wrap a form window in it, register each piece of its state with
  * {@link useUndoable}, and the whole form shares one stack: a field edit, a
  * line added, a bulk import are all steps in the same history, undone newest
- * first. Two open windows have two independent stacks, so ⌘Z never reaches
- * across into a window the user is not looking at.
+ * first. Two open windows have two independent stacks, and passing
+ * {@link UndoProviderProps.windowId} is what keeps them independent in
+ * practice — see that prop.
  *
  * History is the unsaved edit only. It lives with the mounted provider and
- * dies with it, and `clear()` ends it at a save — past that point "earlier" is
- * on the server, and taking it back is not something a form can do.
+ * dies with it. Both ends of the edit are the caller's to mark: `baseline()`
+ * once the record has arrived, so the load is the starting point rather than
+ * the first thing ⌘Z takes back, and `clear()` at a save, past which "earlier"
+ * is on the server and not something a form can reach.
  *
  * Anyone who may edit the record gets it — it is not a privileged feature, and
  * the user most helped by an undo is the one least sure of what they just did.
  * A reader is the only one it is withheld from, and only because there is
- * nothing for them to take back.
+ * nothing for them to take back. Note that `canEdit` is the caller's claim, and
+ * the shell-level provider `WindowManager` mounts around every window has no
+ * way to make it: it knows nothing about the record inside. That one defaults
+ * to enabled, and a read-only form states the fact by nesting its own
+ * `<UndoProvider canEdit={false}>`, which shadows it.
  */
-export function UndoProvider({ children, canEdit = true, perms }: UndoProviderProps) {
+export function UndoProvider({ children, canEdit = true, perms, windowId }: UndoProviderProps) {
   const [state, dispatch] = useReducer(undoReducer, emptyUndoState);
   const slices = useRef(new Map<string, Slice>());
   const { hasAnyPerm } = useShellAuth();
@@ -83,6 +120,9 @@ export function UndoProvider({ children, canEdit = true, perms }: UndoProviderPr
   // making one step out of one action.
   const pending = useRef<{ values: UndoSnapshot; label: string; coalesceKey: string | null } | null>(null);
 
+  // Set while a `baseline()` is settling — see it further down.
+  const suspended = useRef(false);
+
   const snapshot = useCallback((): UndoSnapshot => {
     const values: UndoSnapshot = {};
     for (const [id, slice] of slices.current) values[id] = slice.getLast();
@@ -92,8 +132,36 @@ export function UndoProvider({ children, canEdit = true, perms }: UndoProviderPr
   const register = useCallback((id: string, slice: Slice) => { slices.current.set(id, slice); }, []);
   const unregister = useCallback((id: string) => { slices.current.delete(id); }, []);
 
+  // Runaway guard. A slice registered with a value that is freshly allocated
+  // on every render — `useUndoable(rows.filter(r => r.on), ...)` rather than a
+  // piece of state — has a new identity every time the provider re-renders,
+  // and every recorded step re-renders the provider. That is a closed loop
+  // running at render speed: it locks the tab rather than merely being slow,
+  // and it presents as a browser hang with no clue as to which slice did it.
+  // No sequence of human actions produces this many steps this fast, so the
+  // rate is a sound tell. Trip once, say which slice and why, and stop
+  // recording — a dead undo stack and a console error can be diagnosed.
+  const runaway = useRef({ last: 0, count: 0, tripped: false });
+
   const record = useCallback((label: string, coalesceKey: string | null) => {
-    if (!enabled || pending.current) return;
+    if (!enabled || suspended.current || pending.current) return;
+    const r = runaway.current;
+    if (r.tripped) return;
+    const now = Date.now();
+    if (now - r.last > RUNAWAY_QUIET_MS) r.count = 0;
+    r.last = now;
+    if (++r.count > RUNAWAY_LIMIT) {
+      r.tripped = true;
+      console.error(
+        `[react-os-shell] UndoProvider: "${label}" recorded ${RUNAWAY_LIMIT} undo steps with no ` +
+        'pause between them, which no user action can do. The value passed to useUndoable for ' +
+        'this slice is almost certainly rebuilt on every render (a .map/.filter/object literal ' +
+        'in the call) rather than held in state, so it reads as changed every time — and since ' +
+        'recording a step re-renders the form, that is a loop. Undo recording is now off for ' +
+        'this form to keep the tab responsive.',
+      );
+      return;
+    }
     pending.current = { values: snapshot(), label, coalesceKey };
     queueMicrotask(() => {
       const step = pending.current;
@@ -128,14 +196,65 @@ export function UndoProvider({ children, canEdit = true, perms }: UndoProviderPr
     dispatch({ type: 'redo', undoStep });
   }, [state.future, snapshot, applyValues]);
 
-  const clear = useCallback(() => dispatch({ type: 'clear' }), []);
+  /**
+   * Drop the history and make wherever the form is going to be the starting
+   * point.
+   *
+   * The awkward moment is a form filled from an async fetch. The record
+   * arriving is a state change like any other, so every slice records it, and
+   * the user's first ⌘Z hands back the empty form they were looking at before
+   * it loaded. Clearing after the fact does not fix that on its own, because
+   * the values assigned alongside the call have not landed yet — they arrive in
+   * the commit this schedules, and record on the way in.
+   *
+   * So it suspends recording rather than only clearing: the slices still take
+   * the loaded values as their own starting point (`useUndoable` moves `last`
+   * whether or not a step came of it), they just do not call it an edit. The
+   * effect below lifts the suspension once that commit's slices have run —
+   * child effects before parent — which is one commit, exactly, and no timer.
+   *
+   * The one thing it asks of a caller is to assign in the same effect:
+   *
+   *     useEffect(() => {
+   *       if (!data) return;
+   *       setName(data.name); setQty(data.qty);
+   *       baseline();
+   *     }, [data]);
+   *
+   * React batches those into one commit, so the order within the effect does
+   * not matter. Assigning in a *different* effect from the `baseline()` call
+   * does, and would leave the load recorded.
+   */
+  const [baselineToken, setBaselineToken] = useState(0);
+
+  const baseline = useCallback(() => {
+    suspended.current = true;
+    pending.current = null;
+    setBaselineToken(t => t + 1);
+    dispatch({ type: 'clear' });
+  }, []);
+
+  useEffect(() => {
+    if (!suspended.current) return;
+    suspended.current = false;
+    pending.current = null;
+    dispatch({ type: 'clear' });
+  }, [baselineToken]);
+
+  // Same operation, named for the other end of the edit. Kept distinct at the
+  // call site because "clear on save" and "baseline on load" are different
+  // facts about the form, and a reader of either line should not have to work
+  // out which one was meant.
+  const clear = baseline;
 
   const canUndo = enabled && state.past.length > 0;
   const canRedo = enabled && state.future.length > 0;
 
   // Bound here rather than on the buttons, so the keys work in a form that
-  // shows no controls at all. Only the frontmost window answers.
-  const isActive = useModalActive();
+  // shows no controls at all. The listener is on `window`, so every open
+  // window's provider sees every press — `windowId` is what makes exactly one
+  // of them answer.
+  const isActive = useIsActiveWindow(windowId);
   const keyed = useRef({ undo, redo, canUndo, canRedo });
   keyed.current = { undo, redo, canUndo, canRedo };
   useEffect(() => {
@@ -155,10 +274,10 @@ export function UndoProvider({ children, canEdit = true, perms }: UndoProviderPr
   }, [isActive, enabled]);
 
   const value = useMemo<UndoContextValue>(() => ({
-    register, unregister, record, undo, redo, clear, canUndo, canRedo, enabled,
+    register, unregister, record, undo, redo, clear, baseline, canUndo, canRedo, enabled,
     undoLabel: canUndo ? state.past[state.past.length - 1].label : null,
     redoLabel: canRedo ? state.future[0].label : null,
-  }), [register, unregister, record, undo, redo, clear, canUndo, canRedo, enabled, state.past, state.future]);
+  }), [register, unregister, record, undo, redo, clear, baseline, canUndo, canRedo, enabled, state.past, state.future]);
 
   return <UndoContext.Provider value={value}>{children}</UndoContext.Provider>;
 }
@@ -173,6 +292,23 @@ export interface UndoControlsApi {
   redoLabel: string | null;
   /** End the history — call after a successful save. */
   clear: () => void;
+  /**
+   * Make the form as it stands the starting point, discarding the history.
+   *
+   * Call it once the record has arrived from the server. State filled from a
+   * fetch is a change like any other as far as the slices are concerned, so
+   * without this the load itself is the oldest step and the user's first ⌘Z
+   * empties the form they were just given:
+   *
+   *     const { data } = useQuery(...);
+   *     const { baseline } = useUndo();
+   *     useEffect(() => { if (data) baseline(); }, [data, baseline]);
+   *
+   * Worth calling on every arrival, not just the first: a window kept open
+   * across a refetch, or one whose entity changes underneath it, wants the
+   * same treatment, and the call is idempotent for a form nobody has touched.
+   */
+  baseline: () => void;
   /** False when the user may not edit this record, so custom UI can hide
    *  itself the way `UndoControls` does. */
   enabled: boolean;
@@ -189,6 +325,7 @@ export function useUndo(): UndoControlsApi {
     undo: ctx?.undo ?? noop,
     redo: ctx?.redo ?? noop,
     clear: ctx?.clear ?? noop,
+    baseline: ctx?.baseline ?? noop,
     canUndo: ctx?.canUndo ?? false,
     canRedo: ctx?.canRedo ?? false,
     undoLabel: ctx?.undoLabel ?? null,
@@ -220,6 +357,14 @@ export interface UndoableOptions {
  * Registering more than one slice is the point: a step snapshots all of them
  * together, so undoing restores a coherent form rather than one slice out of
  * step with the rest.
+ *
+ * `value` must be the state itself, not something derived from it on the way
+ * in. A change is detected by identity, so `useUndoable(rows.filter(r => r.on),
+ * ...)` hands over a new array on every render and reads as a change every
+ * time — and since recording a step re-renders the provider, that closes a
+ * loop at render speed. The provider trips a runaway guard and says so rather
+ * than letting the tab hang, but the fix is at the call site: register the
+ * state, and derive from it afterwards.
  */
 export function useUndoable<T>(value: T, apply: (next: T) => void, opts: UndoableOptions) {
   const ctx = useContext(UndoContext);
@@ -239,14 +384,24 @@ export function useUndoable<T>(value: T, apply: (next: T) => void, opts: Undoabl
   }, [ctx, id]);
 
   const { label, coalesceKey = null } = opts;
+  // `value` alone, deliberately. The context object is a new identity after
+  // every recorded step — it carries `canUndo` — so listing it here would run
+  // this effect on each one; it is read through a ref instead. `label` and
+  // `coalesceKey` are what a change would be *called*, not a change in
+  // themselves, and neither should provoke a step.
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
+  const optsRef = useRef({ label, coalesceKey });
+  optsRef.current = { label, coalesceKey };
   useEffect(() => {
-    if (!ctx) return;
+    const c = ctxRef.current;
+    if (!c) return;
     if (Object.is(value, last.current)) return;
     // Record before moving `last`: the snapshot the provider takes reads this
     // slice through `getLast`, and must see the value from before the change.
-    ctx.record(label, coalesceKey);
+    c.record(optsRef.current.label, optsRef.current.coalesceKey);
     last.current = value;
-  });
+  }, [value]);
 }
 
 /**

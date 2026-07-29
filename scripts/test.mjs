@@ -53,7 +53,14 @@ await build({
   jsx: 'automatic',
   sourcemap: 'inline',
   logLevel: 'warning',
-  external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
+  // jsdom is external because it is a large node-only package that has no
+  // business being bundled; react-dom/client and react-dom/test-utils are
+  // listed so `tests/dom.ts` can pull them in dynamically, after it has put
+  // the DOM globals in place (see the note in that file).
+  external: [
+    'react', 'react-dom', 'react-dom/server', 'react-dom/client',
+    'react-dom/test-utils', 'react/jsx-runtime', 'jsdom',
+  ],
   define: { __PKG_VERSION__: '"test"' },
 });
 

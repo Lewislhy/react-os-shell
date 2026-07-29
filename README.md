@@ -186,7 +186,7 @@ All exports are named — `import { Modal, ... } from 'react-os-shell'`.
 | `Pagination` | Numbered page control (pairs with tables; complements `ListFooter`). |
 | `Sparkline`, `BarChart`, `DonutChart` | Dependency-free inline-SVG charts (`currentColor`-themed). |
 | `BulkImportGrid` | Paste-or-upload bulk entry with column mapping, duplicate review and optional sum-merge. Hands resolved rows to `onImport`; owns no persistence. |
-| `UndoProvider`, `UndoControls` | One undo stack per form window, covering its fields, line items and bulk imports. Wrap the form in the provider, register state with `useUndoable`, drop the controls wherever the form's actions live. Binds ⌘Z / ⇧⌘Z (and Ctrl+Y) except while the caret is in a field, where the browser's own undo wins. Offered to anyone who may edit the record — gate with `canEdit` and/or `perms`; a reader sees no controls and records no history. |
+| `UndoProvider`, `UndoControls` | One undo stack per form window, covering its fields, line items and bulk imports. Wrap the form in the provider, register state with `useUndoable`, drop the controls wherever the form's actions live. Binds ⌘Z / ⇧⌘Z (and Ctrl+Y) except while the caret is in a field, where the browser's own undo wins. `WindowManager` already mounts one per window, scoped with `windowId` so a keypress reaches only the frontmost window; pass `windowId` yourself for any provider you mount outside a `<Modal>`, or two open windows will step back together. Offered to anyone who may edit the record — gate with `canEdit` and/or `perms`; a reader sees no controls and records no history. The shell-level provider cannot know the record's permissions, so a read-only form nests its own `<UndoProvider canEdit={false}>` to shadow it. |
 | `DashboardTemplate`, `DataTablePage`, `FormLayoutPage`, `CheckoutTemplate`, `EmailTemplate`, `ChatTemplate`, `GalleryTemplate`, `AuthScreen`, `ErrorPage` | Zero-prop starter page templates composed from the primitives. |
 
 ### Providers + setters
@@ -216,8 +216,8 @@ All exports are named — `import { Modal, ... } from 'react-os-shell'`.
 | `useModalDuplicate(handler)` | Alt-D inside a modal. |
 | `useTableNav({ rows, cols, onCell })` | Arrow-key cell navigation in editable grids. |
 | `useUndoableState(initial, { label, coalesceKey })` | `useState`, with the value in the window's undo stack — a rename, not an extra line. State left as plain `useState` stays out of the history, which is where transient UI, fetched data and validation output belong. |
-| `useUndoable(value, apply, { label, coalesceKey })` | The explicit form, for state whose setter the component does not own. `apply` is the setter you already have. `coalesceKey` folds a run of typing into one step. |
-| `useUndo()` | `{ undo, redo, canUndo, canRedo, undoLabel, clear }` for the enclosing `UndoProvider` — for custom UI, or to `clear()` the history after a save. |
+| `useUndoable(value, apply, { label, coalesceKey })` | The explicit form, for state whose setter the component does not own. `apply` is the setter you already have. `coalesceKey` folds a run of typing into one step. Register the state itself, never a value derived on the way in (`rows.filter(...)`) — changes are detected by identity, so a fresh array each render reads as a change every render. |
+| `useUndo()` | `{ undo, redo, canUndo, canRedo, undoLabel, clear, baseline }` for the enclosing `UndoProvider` — for custom UI, to `clear()` the history after a save, or to `baseline()` it after a load. Call `baseline()` in the same effect that assigns a fetched record, or the load itself becomes the oldest step and the user's first ⌘Z hands back the empty form. |
 | `useMultiModal()` | Manages multi-window stacking + activate/blur. |
 | `useShellAuth() / useShellPrefs() / useShellEntityFetcher() / useBugReport() / useDesktopHost()` | Context readers — the shell uses these internally; consumers may also call them. |
 
