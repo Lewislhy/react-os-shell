@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.1.3] — 2026-07-29
+
+### Fixed
+- **`mediaFileName()` no longer returns the whole payload of a `data:` URL.**
+  The helper derived a display name by slicing at the last `/`. A `data:` URL
+  has no path and its only `/` sits inside the media type, so
+  `data:image/png;base64,iVBOR…` came back as `png;base64,iVBOR…` — the entire
+  encoded image, as the "filename". `MediaUploadField` computes
+  `previewName = value ? mediaFileName(value) : ''` unconditionally and passes
+  it to `<img alt>` (and `<video aria-label>`), so a data-URL value stamped a
+  multi-hundred-kilobyte attribute into the DOM and a screen reader read the
+  base64 out loud. `showFilename={false}` did not avoid it — that only
+  suppresses the visible caption; the accessible name was set either way.
+  `data:` URLs now short-circuit and are named from their media type alone
+  (`image.png`, `image.svg`, `image.icon`, `video.mp4`), never from the body.
+  Path-shaped, `blob:`, query-string, hash and percent-encoded URLs keep their
+  existing derivation, which is pinned by the new spec.
+
 ## [4.1.2] — 2026-07-29
 
 ### Removed
