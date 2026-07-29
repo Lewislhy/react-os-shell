@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.1.5] — 2026-07-29
+
+### Fixed
+- **`FilterBar` no longer nests a `<button>` inside a `<button>`.** Both filter
+  controls render the pill as a `<button role="combobox">`, and both put the
+  clear-X *inside* it as another `<button>` — so every list page with an active
+  filter logged `In HTML, <button> cannot be a descendant of <button>. This will
+  cause a hydration error.` (seen across the admin portal, e.g. Stock on Hand).
+  Invalid nesting is also parser-level: the browser is free to reconstruct the
+  tree, which is what makes it a hydration hazard rather than only a console
+  line. The clear affordance is now a `<span>` with the same
+  `stopPropagation()` click handler, so it looks and behaves exactly as before —
+  one click clears the filter without opening or closing the dropdown. It is
+  `aria-hidden`, not a `role="button"`: it sits inside the combobox, where a
+  nested control would pad the pill's accessible name, and clearing already has
+  a proper keyboard path — the leading "All" entry in the listbox. The pill
+  itself is untouched, so its tab stop and full combobox key handling
+  (arrows/Home/End/Enter/Space/typeahead/Esc) are unchanged.
+- **Importing `Modal` (or anything reaching it) no longer throws outside a
+  browser.** Two `window.addEventListener` calls ran at module scope, so
+  `import` alone crashed with `ReferenceError: window is not defined` under SSR
+  or a `node:test` spec — `FilterBar` reaches `Modal` for its Esc interceptor,
+  which is how this surfaced. Both are now guarded the same way
+  `ensureGestureStyle()` already was; in a browser nothing changes. This is what
+  lets the new `tests/FilterBar.test.tsx` render the component at all.
+
 ## [4.1.4] — 2026-07-29
 
 ### Fixed

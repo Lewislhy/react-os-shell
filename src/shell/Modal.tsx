@@ -694,8 +694,11 @@ function beginPointerGesture(handle: HTMLElement, pointerId: number, cursor: str
   };
 }
 
-// Listen for deactivate-all event from taskbar
-window.addEventListener('deactivate-all-modals', deactivateAllModals);
+// Listen for deactivate-all event from taskbar. Guarded like ensureGestureStyle
+// above: this runs at IMPORT time, so without the check merely importing any
+// component that reaches Modal — FilterBar does, for the Esc interceptor —
+// throws "window is not defined" outside a browser (SSR, or a node:test spec).
+if (typeof window !== 'undefined') window.addEventListener('deactivate-all-modals', deactivateAllModals);
 function getZForModal(id: string): number {
   const idx = activationOrder.indexOf(id);
   if (idx === -1) return -1; // Behind everything — hidden below listing page
@@ -820,12 +823,15 @@ function triggerSplitView() {
 export { triggerSplitView };
 
 // Escape exits exposé. Also clear the highlight so a re-entry starts fresh.
-window.addEventListener('keydown', (e) => {
-  if (_exposeOn && e.key === 'Escape') {
-    setExposeHighlight(null);
-    setExposeState(false);
-  }
-});
+// Import-time, so guarded like the deactivate-all listener above.
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (e) => {
+    if (_exposeOn && e.key === 'Escape') {
+      setExposeHighlight(null);
+      setExposeState(false);
+    }
+  });
+}
 
 interface ExposeTile { x: number; y: number; w: number; h: number; }
 
