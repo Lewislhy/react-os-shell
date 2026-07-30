@@ -152,6 +152,21 @@ test('an intraword underscore stays literal', () => {
   }
 });
 
+test('an underscore that ENDS a word cannot open a run', () => {
+  // Only the opening guard can refuse this one: the closing `_` is followed by a
+  // space, which is a perfectly legal neighbour. Without the guard the copy
+  // silently italicises " and tyres ".
+  const s = 'Wheels_ and tyres _ in stock';
+  assert.deepEqual(kinds(tokenizeInline(s, STOREFRONT_MARKUP)), [`text:${s}`]);
+});
+
+test('an underscore that STARTS a word cannot close a run', () => {
+  // The mirror case, and only the closing guard can refuse it: the opening `_`
+  // is at position 0, where there is nothing to its left to object to.
+  assert.deepEqual(kinds(tokenizeInline('_a_b', STOREFRONT_MARKUP)), ['text:_a_b']);
+  assert.deepEqual(kinds(tokenizeInline('_a_ b', STOREFRONT_MARKUP)), ['text:', 'italic:a', 'text: b']);
+});
+
 test('a non-ASCII word is treated as a word', () => {
   assert.deepEqual(kinds(tokenizeInline('汉_字_汉', STOREFRONT_MARKUP)), ['text:汉_字_汉']);
 });

@@ -213,8 +213,17 @@ export interface InlineRule {
   readonly notBeforeDigit?: boolean;
 }
 
-/** The standard-markdown marks, shared by every product. Two-character
- *  delimiters come first so `**bold**` is never read as two accent runs. */
+/**
+ * The standard-markdown marks, shared by every product.
+ *
+ * `**` and `*` cannot collide even though they share a prefix: a `*` followed
+ * immediately by another `*` is an EMPTY accent run, which no rule matches, so
+ * at any one position exactly one of the two can fire. Order between them is
+ * therefore not observable — which is worth stating, because the obvious
+ * assumption ("longest delimiter must be listed first") would make a future
+ * reader think this array's order is load-bearing when the empty-run rule is
+ * what actually does the work.
+ */
 export const STANDARD_MARKUP: readonly InlineRule[] = [
   { open: '**', close: '**', kind: 'bold' },
   { open: '==', close: '==', kind: 'highlight' },
