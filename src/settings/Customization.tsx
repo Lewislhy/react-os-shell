@@ -407,10 +407,13 @@ export default function Customization({ omit, section }: CustomizationProps = {}
             </span>
             <span className="block text-xs text-gray-400 mt-1">
               While it is on, each reading is recorded with what was happening at the time —
-              how many windows were open, which one was on top, and counts of clicks,
-              keystrokes, scrolls and window drags. No page content or keystroke text is
-              recorded. The log stays on this device and is only shared if you export it
-              with the JSON or CSV button on the overlay.
+              how many windows were open, which one was on top, which menu or submenu you
+              opened, how long you spent moving or resizing a window, and counts of clicks,
+              keystrokes and scrolls. No page content or keystroke text is recorded. The log
+              stays on this device unless you use the overlay's Report button, which sends it
+              — with whatever you type in the box, and a description of this computer
+              (browser, operating system, processor cores, memory, graphics card, screen,
+              connection speed and whether you are on battery) — to the team as a bug report.
             </span>
           </span>
         </label>

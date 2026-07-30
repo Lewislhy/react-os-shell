@@ -167,7 +167,7 @@ export { default as FilterBar, useFilters } from './shell/FilterBar';
 export type { FilterOption } from './shell/FilterBar';
 export { SidebarNavItem, SidebarGroupLabel } from './shell/SidebarNav';
 export { default as MetricBar } from './shell/MetricBar';
-export { default as PerfStats, type PerfStatsProps } from './shell/PerfStats';
+export { default as PerfStats, type PerfStatsProps, type PerfReport } from './shell/PerfStats';
 export {
   classify as classifyPerf,
   summariseFrames,
@@ -182,12 +182,30 @@ export {
   summariseLog as summarisePerfLog,
   toCsv as perfLogToCsv,
   isInteracting,
+  classifyActivity,
   LOG_CAP,
   MIN_GROUP_SAMPLES,
+  MIN_EVENT_SAMPLES,
   type PerfLogRecord,
   type LogSummary,
   type FpsGroup,
+  type ActivityKind,
 } from './shell/perfLog';
+// Marks for hosts with menus or drag surfaces of their own — the shell's own
+// start menu and window gestures already mark themselves.
+export { markMenuOpen, beginWindowGesture, type MenuLayer } from './shell/perfEvents';
+// Rendering a report for a bug tracker — shared so the portals cannot drift
+// into three different descriptions of the same thing.
+export { describePerfReport, perfReportFile } from './shell/perfDescribe';
+export {
+  readEnvironment as readPerfEnvironment,
+  requestAsyncEnvironment,
+  describeMachine,
+  type PerfEnvironment,
+  type AsyncEnvironment,
+  type PlatformHints,
+  type BatteryInfo,
+} from './shell/perfEnvironment';
 export type { MetricBarProps } from './shell/MetricBar';
 export { severityOf, isSeverityTone } from './shell/severity';
 export type { SeverityTone } from './shell/severity';

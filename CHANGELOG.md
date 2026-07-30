@@ -4,6 +4,110 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.6.0] — 2026-07-30
+
+> Supersedes 4.4.0 and 4.5.0, both published mid-review. Consumers should pin
+> `^4.6.0`.
+
+### Added
+- **`describePerfReport(report)` and `perfReportFile(report)`** — a perf report
+  rendered as plain text, and as a `File` ready to attach. The attachment is
+  complete but nobody opens it first: a bug tracker shows *descriptions*, so a
+  performance report whose description is one sentence about a stutter sits in
+  the list looking like every other vague complaint while the numbers that
+  would rank it stay zipped inside 140 KB. The description now carries the
+  machine, the verdict, the median, the worst frame and the slowest gesture.
+
+  In the shell rather than in each consuming portal because it is pure
+  formatting of a shell type and was otherwise going to exist three times —
+  which is how three copies quietly stop agreeing about what a report says.
+  What stays portal-side is what is genuinely portal-shaped: which endpoint to
+  post to, and which module list to seed from.
+
+### Added
+- **The report names the machine it came off.** A frame rate without a machine
+  attached is half a report: "GPU-bound (compositing)" means something very
+  different on an Intel UHD 620 driving a 4K panel than on an M3 Max, and the
+  reporter is the worst-placed person to answer which. `PerfReport.environment`
+  (new module `perfEnvironment.ts`) carries browser and full version, OS and
+  version, CPU architecture and core count, device memory, GPU renderer and
+  vendor, whether WebGL is available at all, screen and colour depth, viewport,
+  heap ceiling, network class, battery state, and the reduced-motion /
+  forced-colors / reduce-transparency settings. `describeMachine()` renders the
+  digest as the one line a triager actually reads:
+
+  ```
+  Chrome 141.0.7390.55 · macOS 15.5.0 (arm) · Apple M3 Max · 12 cores ·
+  8GB+ RAM · 3456×2234 @2x · on battery 37% · reduce transparency on
+  ```
+
+  The last two only appear when true. Both are live explanations for a low
+  frame rate — a laptop in Low Power Mode is capped at 30 fps by the OS, and
+  reduce-transparency being *already on* means the usual first suggestion has
+  been tried. Listing the off states as well would bury the one that is on.
+  Missing WebGL is reported in the GPU's place rather than as a blank, because
+  software compositing is itself the answer to a GPU-bound verdict.
+
+  The user agent alone does not settle it — Chromium freezes its UA string, so
+  Windows 11 reports itself as Windows 10 and an ARM machine looks like an x86
+  one, and no UA string has ever named the GPU. So the GPU comes from a WebGL
+  context created and destroyed inside one call **at report time, never during
+  measurement** (a live context is exactly the sort of thing that would show up
+  in the numbers it is meant to explain), and the OS detail comes from client
+  hints resolved once when the HUD mounts. Every field is best-effort and
+  degrades to null: Firefox and Safari withhold `deviceMemory`, and a report
+  missing one line is a far smaller loss than a report that failed to send.
+
+- **The perf HUD files its own report.** The overlay's JSON and CSV download
+  buttons are replaced by one **Report this** button: it freezes the session log,
+  asks the one question the log cannot answer — *what were you doing?* — and hands
+  both to the host's feedback channel via the new
+  `DesktopHostConfig.onSubmitPerfReport`, which receives the message plus the whole
+  report pre-serialised as a JSON attachment. The download path was the weak link
+  in the chain: the person who can see the jank is rarely the person who can fix
+  it, and a file that has to be found, attached and explained mostly never gets
+  sent. Hosts that wire nothing still get the same JSON, downloaded, so the shell
+  stays usable standalone.
+
+  The log is snapshotted when the composer opens, so the twenty seconds spent
+  typing "the second-level menu stutters" don't become twenty samples of typing at
+  the end of the very report that sentence is about. A rejected submit keeps the
+  composer open with the text intact.
+
+- **The log records the interactions that were actually causing the jank.**
+  Opening the start menu, opening a 2nd- or 3rd-level flyout, moving a window and
+  resizing a window are now their own axes (`menus`, `submenus`, `menuKey`,
+  `moveMs`, `resizeMs`), marked at the source by `StartMenu` and by the window
+  drag/resize gesture rather than inferred from pointer noise. Before this, all
+  four arrived as an anonymous mouse-move — and a hover-opened flyout, which fires
+  no click and no keypress, was filed as **idle**, so the frames people were
+  reporting were landing in the one bucket that is supposed to mean "at rest".
+
+  New in the summary: `byActivity` ranks median frame rate per gesture worst-first
+  (the direct answer to "which gesture is slow"), and `worstMenus` names the
+  slowest flyout the way `worstWindows` already names the slowest screen. Groups
+  report from a lower floor (`MIN_EVENT_SAMPLES`) than window groups, because a
+  flyout opens inside a single 500 ms interval rather than across twenty of them.
+
+### Fixed
+- **`dragMs` counted stationary presses as dragging**, and could therefore report
+  more drag time than the interval it sits in — a 500 ms sample claiming 5,004 ms
+  of dragging, which is impossible on its face and discredits the columns beside
+  it. The counter credited the whole gap since the previous pointer move, so a
+  press held still and then nudged charged the entire hold to the move that ended
+  it. Gaps longer than a stationary-press threshold are no longer counted.
+
+### Changed
+- `FpsGroup` gains `worstMs` and `stalls`, and groups now bucket the full log
+  rather than pre-filtering it. A brief interaction barely moves a median, so the
+  worst frame in the group is the number that matters; and a sample too blocked to
+  report a frame rate is counted rather than dropped, so a group that stalled
+  outright reads as the emergency it is instead of vanishing from the summary. The
+  median is still taken over measurable samples only — a stall never becomes a
+  frame rate the display never showed.
+- The Diagnostics copy in Customization now discloses the new axes and that the
+  Report button sends the log, rather than describing the removed export buttons.
+
 ## [4.3.1] — 2026-07-29
 
 ### Fixed

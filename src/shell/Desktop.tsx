@@ -4,7 +4,7 @@ import { useWindowManager } from './WindowManager';
 import { useShellPrefs } from './ShellPrefs';
 import Modal from './Modal';
 import WidgetManager from './WidgetManager';
-import PerfStats from './PerfStats';
+import PerfStats, { type PerfReport } from './PerfStats';
 import { APP_VERSION } from '../version';
 import changelog, { type ChangelogEntry } from '../changelog';
 import toast from './toast';
@@ -112,6 +112,12 @@ export interface DesktopHostConfig {
    *  calls this. Lets a consumer that files feedback natively (the shell itself
    *  dropped bug reporting in v3.0.0) surface the familiar right-click entry. */
   onReportBug?: () => void;
+  /** File a performance report from the desktop perf HUD through the same
+   *  feedback channel, with the session log attached. Unset, the HUD's button
+   *  downloads the report instead — which is a strictly worse outcome, because
+   *  a file on someone's Downloads folder is not a bug report. Rejecting shows
+   *  the error in the HUD and keeps what the user typed. */
+  onSubmitPerfReport?: (report: PerfReport) => void | Promise<void>;
 }
 
 const DesktopHostContext = createContext<DesktopHostConfig>({});
@@ -1406,7 +1412,10 @@ export default function Desktop({ profile }: { profile: any }) {
           : (versionShowing ? 'bottom-8' : 'bottom-3');
         return (
           <div className={`absolute z-[240] ${side} ${bottom}`}>
-            <PerfStats onClose={() => saveShellPrefs({ show_desktop_stats: false })} />
+            <PerfStats
+              onClose={() => saveShellPrefs({ show_desktop_stats: false })}
+              onSubmit={host.onSubmitPerfReport}
+            />
           </div>
         );
       })()}

@@ -7,6 +7,7 @@ import { glassStyle as getGlassStyle } from '../utils/glass';
 import { PopupMenu, PopupMenuItem, PopupMenuDivider } from './PopupMenu';
 import { useIsMobile } from './useIsMobile';
 import { getSwipingParentKey, setSwipingParentKey, subscribeSwipingParentKey } from './mobileSwipeStore';
+import { beginWindowGesture } from './perfEvents';
 import WindowErrorBoundary from './WindowErrorBoundary';
 import { useShellPrefs } from './ShellPrefs';
 import { boxFillsWorkArea, computeMaximizedBox, isSidebarStripReserved, readAlwaysMaximizedFlag } from './workArea';
@@ -688,8 +689,19 @@ const DRAG_THRESHOLD = 4;
 
 /** Begin a drag/resize pointer gesture on `handle`: capture the pointer, mount
  *  a transparent shield with `cursor`, and promote windows to their own
- *  compositor layers. Returns an idempotent cleanup for the pointerup handler. */
-function beginPointerGesture(handle: HTMLElement, pointerId: number, cursor: string): () => void {
+ *  compositor layers. Returns an idempotent cleanup for the pointerup handler.
+ *
+ *  `kind` exists only for the perf log. Both gestures funnel through here, and
+ *  they are the two heaviest things the compositor is ever asked to do in this
+ *  shell — a move translates a promoted layer, a resize relayouts the window's
+ *  whole subtree per frame — so the log times them apart rather than recording
+ *  an anonymous pointer drag. */
+function beginPointerGesture(
+  handle: HTMLElement,
+  pointerId: number,
+  cursor: string,
+  kind: 'move' | 'resize',
+): () => void {
   ensureGestureStyle();
   try { handle.setPointerCapture(pointerId); } catch { /* capture unsupported for this input */ }
   document.body.classList.add('rosh-gesturing');
@@ -697,10 +709,12 @@ function beginPointerGesture(handle: HTMLElement, pointerId: number, cursor: str
   shield.setAttribute('data-drag-shield', '');
   shield.style.cssText = `position:fixed;inset:0;z-index:2147483647;cursor:${cursor};background:transparent;touch-action:none`;
   document.body.appendChild(shield);
+  const endMark = beginWindowGesture(kind);
   let done = false;
   return () => {
     if (done) return;
     done = true;
+    endMark();
     try { handle.releasePointerCapture(pointerId); } catch { /* already released on pointerup */ }
     shield.remove();
     document.body.classList.remove('rosh-gesturing');
@@ -1799,7 +1813,7 @@ export default function Modal({ open, onClose, title, icon, copyText, size = 'lg
       // Promote to a real drag gesture on the first move past the threshold.
       if (!endGesture) {
         if (Math.abs(ev.clientX - sx) < DRAG_THRESHOLD && Math.abs(ev.clientY - sy) < DRAG_THRESHOLD) return;
-        endGesture = beginPointerGesture(dragHandle, dragPointerId, 'move');
+        endGesture = beginPointerGesture(dragHandle, dragPointerId, 'move', 'move');
         // The exposé exit path leaves `transition: transform` on the panel for
         // ~320ms — a drag starting inside that window would animate/lag every
         // frame's translate below, so pin transitions off for the gesture.
@@ -1950,7 +1964,7 @@ export default function Modal({ open, onClose, title, icon, copyText, size = 'lg
       // Promote to a real resize gesture on the first move past the threshold.
       if (!endGesture) {
         if (Math.abs(ev.clientX - sx) < DRAG_THRESHOLD && Math.abs(ev.clientY - sy) < DRAG_THRESHOLD) return;
-        endGesture = beginPointerGesture(resizeHandle, resizePointerId, RESIZE_CURSOR[corner]);
+        endGesture = beginPointerGesture(resizeHandle, resizePointerId, RESIZE_CURSOR[corner], 'resize');
       }
       pending = compute(ev.clientX - sx, ev.clientY - sy);
       if (!raf) raf = requestAnimationFrame(flush);

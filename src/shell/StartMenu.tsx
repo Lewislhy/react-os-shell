@@ -11,6 +11,7 @@ import {
   type VirtualSection,
 } from '../shell-config/nav';
 import { visibleChildren as navVisibleChildren, isReachable } from './nav-types';
+import { markMenuOpen } from './perfEvents';
 import { useAuth } from '../contexts/AuthContext';
 import { glassStyle, GLASS_INPUT_BG } from '../utils/glass';
 import { useIsMobile } from './useIsMobile';
@@ -84,6 +85,17 @@ export default function StartMenu({
 
   // Clear the 3rd-level flyout whenever the level-2 flyout changes target.
   useEffect(() => { setHoveredChild(null); }, [hoveredSection]);
+
+  // ── Perf marks ──
+  // Each layer is a fresh frosted-glass surface measured, positioned and
+  // animated in over everything already on screen, which makes opening one the
+  // most expensive thing this menu does — and, on a slow machine, the moment
+  // people notice. Marked from effects rather than from the hover handlers so
+  // every route in (pointer, keyboard, a section cleared and re-entered) is
+  // counted once, and only when the layer actually renders.
+  useEffect(() => { if (open) markMenuOpen('menu', 'start'); }, [open]);
+  useEffect(() => { if (hoveredSection) markMenuOpen('submenu', hoveredSection); }, [hoveredSection]);
+  useEffect(() => { if (hoveredChild) markMenuOpen('submenu', hoveredChild); }, [hoveredChild]);
 
   // Capture each flyout's intrinsic rendered height after layout. Runs
   // before paint, so the very next paint repositions using the actual h.

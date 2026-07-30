@@ -1,7 +1,13 @@
 /**
  * Desktop performance HUD — an opt-in overlay that measures where the UI is
  * actually spending its time, so "it feels laggy" can become a number someone
- * can act on, and a log someone can send.
+ * can act on, and a report someone can file.
+ *
+ * Filing is the end of the story, not an export: the person who can see the
+ * jank is rarely the person who can fix it, and a downloaded JSON that has to
+ * be found, attached and explained mostly does not get sent. One button
+ * freezes the log, asks the one question a log cannot answer — what were you
+ * doing? — and hands both to the host's feedback channel.
  *
  * Two rules shape the implementation, both about not corrupting the reading:
  *
@@ -23,7 +29,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { classify, summariseFrames, type PerfReading, type Verdict } from './perfVerdict';
-import { appendRecord, summariseLog, toCsv, type PerfLogRecord } from './perfLog';
+import { appendRecord, summariseLog, type LogSummary, type PerfLogRecord } from './perfLog';
+import { drainPerfEvents, setPerfCollecting } from './perfEvents';
+import {
+  readEnvironment,
+  requestAsyncEnvironment,
+  type AsyncEnvironment,
+  type PerfEnvironment,
+} from './perfEnvironment';
 
 /** How often the accumulated frame data is turned into a render and a log record. */
 const FLUSH_MS = 500;
@@ -39,6 +52,10 @@ const HISTORY = 40;
  *  second would itself become main-thread work the HUD would then report. */
 const PERSIST_EVERY_MS = 10_000;
 const LOG_STORAGE_KEY = 'react-os-shell:perf-log';
+/** Longest gap between two pointer moves still counted as drag time. Far above
+ *  one frame even on a machine in trouble, so a real drag is never clipped; a
+ *  gap beyond it means the pointer stopped. */
+const MAX_DRAG_GAP_MS = 100;
 
 /** Chrome exposes heap numbers off `performance`; nothing else does, and it is
  *  not in any spec — hence the local shape rather than a lib type. */
@@ -75,14 +92,39 @@ function readWindows(): { windows: number; active: string | null } {
   return { windows: panels.length, active };
 }
 
+/** A finished report, handed to the host to file. The JSON is pre-serialised
+ *  because the host's job is to attach it, not to re-derive it; `summary` and
+ *  `verdict` come along so a host can title or route the report without
+ *  parsing the attachment back apart. */
+export interface PerfReport {
+  /** What the user typed about what they were doing. May be empty. */
+  message: string;
+  /** Suggested attachment filename, stamped with the local time. */
+  filename: string;
+  /** The whole report — environment, summary and every raw record. */
+  json: string;
+  summary: LogSummary;
+  /** The HUD's current headline, e.g. "GPU-bound (compositing)". */
+  verdict: string;
+  /** The machine the readings came off — GPU, cores, memory, OS, screen. A
+   *  verdict of "GPU-bound" is not actionable until you know which GPU. */
+  environment: PerfEnvironment;
+}
+
 export interface PerfStatsProps {
   /** Dismiss handler — the shell wires this to turn the pref back off, so the
    *  HUD can be closed from itself rather than only from Preferences. */
   onClose?: () => void;
+  /** File the report through the host's own feedback channel — the whole point
+   *  of the HUD, since a log that reaches nobody fixes nothing. Rejecting
+   *  surfaces the error and keeps the composer open with the text intact.
+   *  Without it the button downloads the same JSON instead, so the shell stays
+   *  usable standalone. */
+  onSubmit?: (report: PerfReport) => void | Promise<void>;
   className?: string;
 }
 
-export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
+export default function PerfStats({ onClose, onSubmit, className = '' }: PerfStatsProps) {
   const framesRef = useRef<number[]>([]);
   const blockedMsRef = useRef(0);
   const activityRef = useRef({ clicks: 0, keys: 0, scrolls: 0, dragMs: 0 });
@@ -91,11 +133,40 @@ export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
   const startedAtRef = useRef(0);
   const persistedAtRef = useRef(0);
 
+  /** The log as it stood when the composer opened. Frozen there so the twenty
+   *  seconds someone spends typing "the second-level menu stutters" do not
+   *  become twenty samples of typing at the end of the very report that
+   *  sentence is about. */
+  const snapshotRef = useRef<PerfLogRecord[] | null>(null);
+  /** Client hints and battery state are async and unchanging, so they are
+   *  fetched once here and read synchronously when a report is built. */
+  const envRef = useRef<AsyncEnvironment | null>(null);
+
   const [longTaskSupported, setLongTaskSupported] = useState(false);
   const [reading, setReading] = useState<PerfReading>({ fps: 0, frameMs: 0, worstMs: 0, blockedPct: null });
   const [history, setHistory] = useState<number[]>([]);
   const [heap, setHeap] = useState<{ usedMB: number; limitMB: number } | null>(null);
   const [logSize, setLogSize] = useState(0);
+  const [composing, setComposing] = useState(false);
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  // ── Interaction marks: menus and window gestures only accumulate while the
+  //    HUD is up. See perfEvents for why a counter left running would lie.
+  useEffect(() => {
+    setPerfCollecting(true);
+    return () => setPerfCollecting(false);
+  }, []);
+
+  // ── Machine detail. Resolved on mount rather than at report time: the values
+  //    cannot change, and some browsers gate high-entropy hints behind a
+  //    prompt that must not fire while someone is filing a report.
+  useEffect(() => {
+    let live = true;
+    requestAsyncEnvironment().then(env => { if (live) envRef.current = env; });
+    return () => { live = false; };
+  }, []);
 
   // ── Frame sampling: refs only, so this never triggers a render ──
   useEffect(() => {
@@ -145,8 +216,14 @@ export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
     const onPointerMove = () => {
       if (!dragRef.current.down) return;
       const now = performance.now();
-      activityRef.current.dragMs += now - dragRef.current.since;
+      const gap = now - dragRef.current.since;
       dragRef.current.since = now;
+      // Only time the pointer actually spent moving. Without the cap, a press
+      // held still for five seconds and then nudged credits all five to the
+      // move it ended on — which is how a 500ms interval came to report 5,004ms
+      // of dragging, a number that cannot be true and quietly discredits the
+      // column beside it. A gap this long is a stationary press, not a drag.
+      if (gap <= MAX_DRAG_GAP_MS) activityRef.current.dragMs += gap;
     };
     const onPointerUp = () => { dragRef.current.down = false; };
     const onKeyDown = () => { activityRef.current.keys++; };
@@ -213,6 +290,7 @@ export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
       const nextReading: PerfReading = { ...frames, blockedPct };
 
       const activity = activityRef.current;
+      const events = drainPerfEvents();
       const { windows, active } = readWindows();
       logRef.current = appendRecord(logRef.current, {
         t: Math.round(now - startedAtRef.current),
@@ -226,6 +304,11 @@ export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
         keys: activity.keys,
         scrolls: activity.scrolls,
         dragMs: Math.round(activity.dragMs),
+        menus: events.menus,
+        submenus: events.submenus,
+        menuKey: events.menuKey,
+        moveMs: Math.round(events.moveMs),
+        resizeMs: Math.round(events.resizeMs),
       });
       // Zero in place — never reassign. See the listener effect above.
       activity.clicks = 0;
@@ -251,43 +334,81 @@ export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
     return () => clearInterval(id);
   }, [longTaskSupported, persist]);
 
-  const download = useCallback((body: string, type: string, extension: string) => {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const url = URL.createObjectURL(new Blob([body], { type }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `perf-log-${stamp}.${extension}`;
-    link.click();
-    URL.revokeObjectURL(url);
+  /** Freeze the log and open the composer. */
+  const beginReport = useCallback(() => {
+    snapshotRef.current = logRef.current.slice();
+    setSendError(null);
+    setComposing(true);
   }, []);
 
-  /** JSON carries the summary alongside the raw records, so whoever opens the
-   *  file gets the conclusion without having to run the analysis themselves. */
-  const exportJson = useCallback(() => {
-    download(
-      JSON.stringify(
+  const verdict = classify(reading);
+
+  /** Build the report from the frozen snapshot. The summary rides alongside the
+   *  raw records so whoever opens the file gets the conclusion without having
+   *  to run the analysis themselves, and the user's own sentence goes in the
+   *  file too — the attachment has to stand alone once it is detached from the
+   *  message that carried it. */
+  const buildReport = useCallback((): PerfReport => {
+    const records = snapshotRef.current ?? logRef.current;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const summary = summariseLog(records);
+    const environment = readEnvironment(envRef.current);
+    return {
+      message,
+      filename: `perf-log-${stamp}.json`,
+      summary,
+      environment,
+      verdict: verdict.label,
+      json: JSON.stringify(
         {
           generatedAt: new Date().toISOString(),
-          userAgent: navigator.userAgent,
-          screen: { width: window.screen.width, height: window.screen.height, dpr: window.devicePixelRatio },
-          reducedTransparency: document.documentElement.classList.contains('rosh-reduce-transparency'),
-          summary: summariseLog(logRef.current),
-          records: logRef.current,
+          message,
+          verdict: verdict.label,
+          environment,
+          summary,
+          records,
         },
         null,
         2,
       ),
-      'application/json',
-      'json',
-    );
-  }, [download]);
+    };
+  }, [message, verdict.label]);
 
-  const exportCsv = useCallback(() => download(toCsv(logRef.current), 'text/csv', 'csv'), [download]);
+  /** Fallback when no host channel is wired: the same JSON, to disk. */
+  const downloadReport = useCallback((report: PerfReport) => {
+    const url = URL.createObjectURL(new Blob([report.json], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = report.filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
-  const verdict = classify(reading);
+  const send = useCallback(async () => {
+    const report = buildReport();
+    setSending(true);
+    setSendError(null);
+    try {
+      if (onSubmit) await onSubmit(report);
+      else downloadReport(report);
+      snapshotRef.current = null;
+      setMessage('');
+      setComposing(false);
+    } catch (err) {
+      // Keep the composer open with the text intact — retyping a description
+      // of something that has already stopped happening is how a report stops
+      // getting filed at all.
+      setSendError(err instanceof Error && err.message ? err.message : 'Could not send. Try again.');
+    } finally {
+      setSending(false);
+    }
+  }, [buildReport, downloadReport, onSubmit]);
+
   const styles = VERDICT_STYLES[verdict.kind];
   const peak = Math.max(60, ...history);
   const loggedSeconds = Math.round((logSize * FLUSH_MS) / 1000);
+  const sendLabel = onSubmit ? 'Send' : 'Download';
+  const reportSamples = snapshotRef.current?.length ?? logSize;
 
   return (
     <div
@@ -355,26 +476,61 @@ export default function PerfStats({ onClose, className = '' }: PerfStatsProps) {
         <p className="mt-0.5 leading-snug text-white/45">{verdict.detail}</p>
       </div>
 
-      <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-1.5">
-        <span className="text-white/35">
-          log {logSize} · {loggedSeconds < 60 ? `${loggedSeconds}s` : `${Math.round(loggedSeconds / 60)}m`}
-        </span>
-        <span className="flex gap-1">
-          <button
-            onClick={exportJson}
-            disabled={!logSize}
-            className="rounded border border-white/15 px-1.5 py-0.5 text-white/60 transition-colors hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            JSON
-          </button>
-          <button
-            onClick={exportCsv}
-            disabled={!logSize}
-            className="rounded border border-white/15 px-1.5 py-0.5 text-white/60 transition-colors hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            CSV
-          </button>
-        </span>
+      <div className="mt-2 border-t border-white/10 pt-1.5">
+        {composing ? (
+          /* Composer. `select-text` because the panel as a whole is
+             `select-none` — without it the user cannot correct their own
+             sentence. */
+          <div className="select-text space-y-1.5">
+            <label className="block text-white/40" htmlFor="perf-report-message">
+              What were you doing?
+            </label>
+            <textarea
+              id="perf-report-message"
+              value={message}
+              onChange={e => setMessage(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="e.g. opening the second-level menu stutters"
+              className="w-full resize-none rounded border border-white/15 bg-black/40 px-1.5 py-1 font-mono text-[10px] text-white/90 placeholder:text-white/25 focus:border-white/40 focus:outline-none"
+            />
+            {sendError && <p className="leading-snug text-rose-300">{sendError}</p>}
+            <div className="flex items-center justify-between">
+              {/* Just the count — "samples attached" wraps to a second line in
+                  the panel's 224px and shoves the buttons down. */}
+              <span className="text-white/35">{reportSamples} samples</span>
+              <span className="flex gap-1">
+                <button
+                  onClick={() => { setComposing(false); snapshotRef.current = null; setSendError(null); }}
+                  disabled={sending}
+                  className="rounded border border-white/15 px-1.5 py-0.5 text-white/50 transition-colors hover:border-white/30 hover:text-white disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={send}
+                  disabled={sending}
+                  className="rounded border border-white/30 bg-white/10 px-1.5 py-0.5 text-white/90 transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {sending ? 'Sending…' : sendLabel}
+                </button>
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <span className="text-white/35">
+              log {logSize} · {loggedSeconds < 60 ? `${loggedSeconds}s` : `${Math.round(loggedSeconds / 60)}m`}
+            </span>
+            <button
+              onClick={beginReport}
+              disabled={!logSize}
+              className="rounded border border-white/15 px-1.5 py-0.5 text-white/60 transition-colors hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {onSubmit ? 'Report this' : 'Save report'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

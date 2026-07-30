@@ -19,7 +19,7 @@ import type { BottleneckKind } from './perfVerdict';
 
 /** One flush interval's worth of measurement plus its context. Keys are short
  *  because thousands of these get JSON-serialised into localStorage and into
- *  whatever the user emails afterwards. */
+ *  whatever the user sends afterwards. */
 export interface PerfLogRecord {
   /** Milliseconds since logging began. */
   t: number;
@@ -37,15 +37,67 @@ export interface PerfLogRecord {
   clicks: number;
   keys: number;
   scrolls: number;
-  /** Milliseconds spent mid-drag during the interval. Dragging is the single
-   *  most compositing-heavy thing a user does in a window shell, so it gets
-   *  its own axis rather than being lumped in with clicks. */
+  /** Milliseconds spent with the pointer down and moving. Dragging is the
+   *  single most compositing-heavy thing a user does in a window shell, so it
+   *  gets its own axis rather than being lumped in with clicks. Covers any
+   *  drag — a window gesture, a desktop icon, a text selection; `moveMs` and
+   *  `resizeMs` below are the window subset of it. */
   dragMs: number;
+  /** Start-menu opens (`perfEvents`). */
+  menus: number;
+  /** Flyout opens — 2nd- and 3rd-level menus. Hover-opened flyouts fire no
+   *  click and no keypress, so before this axis existed the frame a submenu
+   *  painted on was filed as *idle*, which is where the jank people actually
+   *  report was going missing. */
+  submenus: number;
+  /** Last menu or flyout opened in the interval, so one can be named. */
+  menuKey: string | null;
+  /** Milliseconds spent dragging a window by its title bar. */
+  moveMs: number;
+  /** Milliseconds spent dragging a window's resize handle. */
+  resizeMs: number;
 }
 
 export interface FpsGroup {
   samples: number;
+  /** Median across the group's *measurable* samples — see `summariseLog`. Zero
+   *  when every sample in the group stalled. */
   medianFps: number;
+  /** Slowest single frame anywhere in the group. For a group of brief
+   *  interactions this is the number that matters: a flyout that costs one
+   *  300ms frame barely moves a median but is exactly what the user saw. */
+  worstMs: number;
+  /** Samples too blocked to report a frame rate at all. Kept beside the median
+   *  rather than folded into it, so a group that is entirely stalls reads as
+   *  the emergency it is instead of as a 0 fps reading. */
+  stalls: number;
+}
+
+/**
+ * What the user was doing during a sample, reduced to one label.
+ *
+ * A single interval routinely carries several axes at once — opening a flyout
+ * involves a click, a pointer move and a menu mark — so the ranking below
+ * decides which one the sample is filed under. It runs most-specific first:
+ * the deliberate, expensive gesture beats the incidental click that came with
+ * it, because filing a janky submenu open under "click" is how you end up
+ * optimising the wrong thing.
+ */
+export type ActivityKind = 'submenu' | 'menu' | 'resize' | 'move' | 'scroll' | 'type' | 'click' | 'idle';
+
+const ACTIVITY_ORDER: { kind: ActivityKind; test: (r: PerfLogRecord) => boolean }[] = [
+  { kind: 'submenu', test: r => r.submenus > 0 },
+  { kind: 'menu', test: r => r.menus > 0 },
+  { kind: 'resize', test: r => r.resizeMs > 0 },
+  { kind: 'move', test: r => r.moveMs > 0 },
+  { kind: 'scroll', test: r => r.scrolls > 0 },
+  { kind: 'type', test: r => r.keys > 0 },
+  { kind: 'click', test: r => r.clicks > 0 || r.dragMs > 0 },
+];
+
+/** File a sample under the one thing most likely to have cost it. */
+export function classifyActivity(r: PerfLogRecord): ActivityKind {
+  return ACTIVITY_ORDER.find(entry => entry.test(r))?.kind ?? 'idle';
 }
 
 export interface LogSummary {
@@ -60,10 +112,16 @@ export interface LogSummary {
    *  rendering cost that only shows up under interaction. */
   interacting: FpsGroup | null;
   idle: FpsGroup | null;
+  /** Frame rate per kind of interaction, worst-first — the answer to "which
+   *  gesture is slow", which is the question a report is usually filed to
+   *  ask. */
+  byActivity: (FpsGroup & { kind: ActivityKind })[];
   /** Frame rate against how many windows were open. */
   byWindowCount: (FpsGroup & { windows: number })[];
   /** Windows ranked worst-first, so the slowest screen names itself. */
   worstWindows: (FpsGroup & { key: string })[];
+  /** Menus and flyouts ranked worst-first, same idea one layer up. */
+  worstMenus: (FpsGroup & { key: string })[];
 }
 
 /** Records kept in memory before the oldest are dropped. At one record per
@@ -76,6 +134,13 @@ export const LOG_CAP = 2400;
  *  someone to go optimise the wrong screen. */
 export const MIN_GROUP_SAMPLES = 4;
 
+/** The floor for menu and gesture groups. Lower because these events are rare
+ *  by construction — a flyout opens inside a single 500ms interval, not across
+ *  twenty of them, so holding them to the window floor would suppress exactly
+ *  the findings the axes were added for. Two still rules out a one-off, and
+ *  every group carries its own `samples` for whoever reads it. */
+export const MIN_EVENT_SAMPLES = 2;
+
 /** Append with a cap, oldest dropped first. Returns a new array — callers hold
  *  this in React state, where mutation would not re-render. */
 export function appendRecord(log: PerfLogRecord[], record: PerfLogRecord, cap = LOG_CAP): PerfLogRecord[] {
@@ -86,7 +151,7 @@ export function appendRecord(log: PerfLogRecord[], record: PerfLogRecord, cap = 
 
 /** True when the user was doing something during the interval. */
 export function isInteracting(r: PerfLogRecord): boolean {
-  return r.clicks > 0 || r.keys > 0 || r.scrolls > 0 || r.dragMs > 0;
+  return classifyActivity(r) !== 'idle';
 }
 
 function median(values: number[]): number {
@@ -96,19 +161,46 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/**
+ * Reduce a bucket of samples to a group.
+ *
+ * A reading taken while the main thread was too blocked to deliver frames
+ * carries fps 0. Letting those into a median would report a frame rate the
+ * display never showed, so the median is taken over the measurable samples
+ * only — but the stall is not thrown away, because a stall is the worst thing
+ * in the log. It survives as `stalls`, and its frame time still sets
+ * `worstMs`.
+ */
 function group(records: PerfLogRecord[]): FpsGroup {
-  return { samples: records.length, medianFps: median(records.map(r => r.fps)) };
+  const measured = records.filter(r => r.fps > 0);
+  return {
+    samples: records.length,
+    medianFps: median(measured.map(r => r.fps)),
+    worstMs: records.reduce((worst, r) => (r.worstMs > worst ? r.worstMs : worst), 0),
+    stalls: records.length - measured.length,
+  };
 }
 
-/**
- * Reduce a log to the handful of statements worth acting on.
- *
- * Only samples with a real frame rate are measured — a reading taken while the
- * main thread was too blocked to deliver frames carries fps 0, and letting
- * those into a median would report a frame rate the display never showed.
- * They still count toward `verdictShare`, which is where that condition
- * belongs.
- */
+/** Bucket by a key, dropping records that have none. */
+function bucket<K>(records: PerfLogRecord[], keyOf: (r: PerfLogRecord) => K | null): Map<K, PerfLogRecord[]> {
+  const map = new Map<K, PerfLogRecord[]>();
+  for (const r of records) {
+    const key = keyOf(r);
+    if (key === null) continue;
+    const existing = map.get(key);
+    if (existing) existing.push(r); else map.set(key, [r]);
+  }
+  return map;
+}
+
+/** Groups worst-first. A group that stalled outright sorts above one that
+ *  merely ran slowly — `medianFps` is 0 there, which is already the bottom of
+ *  the order, and that is the correct place for it. */
+function rankWorstFirst<T extends FpsGroup>(groups: T[]): T[] {
+  return groups.sort((a, b) => a.medianFps - b.medianFps);
+}
+
+/** Reduce a log to the handful of statements worth acting on. */
 export function summariseLog(log: PerfLogRecord[]): LogSummary {
   const empty: LogSummary = {
     samples: 0,
@@ -118,52 +210,53 @@ export function summariseLog(log: PerfLogRecord[]): LogSummary {
     verdictShare: { smooth: 0, gpu: 0, cpu: 0, unknown: 0 },
     interacting: null,
     idle: null,
+    byActivity: [],
     byWindowCount: [],
     worstWindows: [],
+    worstMenus: [],
   };
   if (!log.length) return empty;
-
-  const measured = log.filter(r => r.fps > 0);
 
   const verdictShare = { ...empty.verdictShare };
   for (const r of log) verdictShare[r.verdict] += 1 / log.length;
 
-  const interacting = measured.filter(isInteracting);
-  const idle = measured.filter(r => !isInteracting(r));
-
-  const byWindows = new Map<number, PerfLogRecord[]>();
-  const byKey = new Map<string, PerfLogRecord[]>();
-  for (const r of measured) {
-    const bucket = byWindows.get(r.windows);
-    if (bucket) bucket.push(r); else byWindows.set(r.windows, [r]);
-    if (r.active) {
-      const keyed = byKey.get(r.active);
-      if (keyed) keyed.push(r); else byKey.set(r.active, [r]);
-    }
-  }
+  const interacting = log.filter(isInteracting);
+  const idle = log.filter(r => !isInteracting(r));
 
   return {
     samples: log.length,
     durationMs: log[log.length - 1].t - log[0].t,
-    medianFps: median(measured.map(r => r.fps)),
+    medianFps: median(log.filter(r => r.fps > 0).map(r => r.fps)),
     worstFrameMs: log.reduce((worst, r) => (r.worstMs > worst ? r.worstMs : worst), 0),
     verdictShare,
     interacting: interacting.length >= MIN_GROUP_SAMPLES ? group(interacting) : null,
     idle: idle.length >= MIN_GROUP_SAMPLES ? group(idle) : null,
-    byWindowCount: [...byWindows.entries()]
+    byActivity: rankWorstFirst(
+      [...bucket(log, classifyActivity).entries()]
+        .filter(([, rs]) => rs.length >= MIN_EVENT_SAMPLES)
+        .map(([kind, rs]) => ({ kind, ...group(rs) })),
+    ),
+    byWindowCount: [...bucket(log, r => r.windows).entries()]
       .filter(([, rs]) => rs.length >= MIN_GROUP_SAMPLES)
       .map(([windows, rs]) => ({ windows, ...group(rs) }))
       .sort((a, b) => a.windows - b.windows),
-    worstWindows: [...byKey.entries()]
-      .filter(([, rs]) => rs.length >= MIN_GROUP_SAMPLES)
-      .map(([key, rs]) => ({ key, ...group(rs) }))
-      .sort((a, b) => a.medianFps - b.medianFps),
+    worstWindows: rankWorstFirst(
+      [...bucket(log, r => r.active).entries()]
+        .filter(([, rs]) => rs.length >= MIN_GROUP_SAMPLES)
+        .map(([key, rs]) => ({ key, ...group(rs) })),
+    ),
+    worstMenus: rankWorstFirst(
+      [...bucket(log, r => r.menuKey).entries()]
+        .filter(([, rs]) => rs.length >= MIN_EVENT_SAMPLES)
+        .map(([key, rs]) => ({ key, ...group(rs) })),
+    ),
   };
 }
 
 const CSV_COLUMNS: (keyof PerfLogRecord)[] = [
   't', 'fps', 'frameMs', 'worstMs', 'blockedPct', 'heapMB',
   'verdict', 'windows', 'active', 'clicks', 'keys', 'scrolls', 'dragMs',
+  'menus', 'submenus', 'menuKey', 'moveMs', 'resizeMs',
 ];
 
 /** Flat CSV, for opening in a spreadsheet without writing any code. */
@@ -171,7 +264,8 @@ export function toCsv(log: PerfLogRecord[]): string {
   const cell = (value: unknown): string => {
     if (value === null || value === undefined) return '';
     const text = typeof value === 'number' ? String(Math.round(value * 10) / 10) : String(value);
-    // A window key is app-supplied text and can contain a comma or a quote.
+    // Window and menu keys are app-supplied text and can contain a comma or a
+    // quote — a section label is literally whatever the nav config says.
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   return [
