@@ -6,12 +6,13 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [4.7.0] — 2026-07-30
 
-Numbered 4.7.0, not 4.4.0: **4.4.0, 4.5.0 and 4.6.0 are already on npm and none of
-them is on `main`.** They were published from a working tree (no `gitHead`) and carry
-the perf-report work, with an `exports` map that still has no `./markup`. So a
-consumer pinned to 4.4.0 resolves a real package, installs the wrong build, and fails
-on a missing subpath — which reads as "the shell is broken" rather than "that version
-never shipped this code". 4.7.0 is above npm's `latest`, so it can actually publish.
+Numbered 4.7.0 because **4.4.0, 4.5.0 and 4.6.0 were already on npm before any of
+them was on `main`** — published from a working tree, no `gitHead`. 4.6.0 has since
+landed on `main` (the perf-report work, #94); **4.4.0 and 4.5.0 remain on npm and on
+no branch at all.** None of the three has a `./markup` subpath, so a consumer pinned
+to 4.4.0 resolves a real package, installs the wrong build and fails on a missing
+subpath — which reads as "the shell is broken" rather than "that version never
+shipped this code". 4.7.0 is above npm's `latest`, so it can actually publish.
 
 ### Added
 - **`react-os-shell/markup` — the editorial markup rule, shared.** A new subpath
