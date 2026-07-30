@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.7.0] — 2026-07-30
+
+### Added
+- **`react-os-shell/markup` — the editorial markup rule, shared.** A new subpath
+  holding one grammar for authored copy: `**bold**`, `_italic_`, `~~strike~~`,
+  `==highlight==`, the writer a toolbar button calls (`applyMark`), the button
+  descriptors (`MARKUP_TOOLS`, `COPY_FIELD_TOOLS`), a tokenizer
+  (`tokenizeInline`) and the plain-text reduction every `alt` / `aria-label` /
+  structured-data field needs (`stripInline`).
+
+  It exists because two products let a human type formatted copy — the admin
+  portal (agent messages, the campaign designer) and the public storefront — and
+  until now each had invented its own delimiters. What is shared here is the
+  RULE, not the rendering: the web paints with theme-token classes, email must
+  inline every style, so each product keeps its own renderer and walks the same
+  token list.
+
+  **Its own subpath, not the barrel, on purpose.** The module imports nothing —
+  no React, no JSX, no DOM, none of this package's fourteen peers — so the
+  storefront can depend on it without inheriting a 3D viewer, a PDF renderer and
+  an xlsx parser. `dist/markup/index.js` is a standalone file with zero import
+  statements; keep it that way.
+
+  Two delimiter choices worth knowing: italic is `_phrase_` because a single
+  asterisk already means the brand accent colour in both products, on hundreds of
+  published instances; and `_` never fires inside a word (CommonMark's own rule),
+  which is what stops a mail-merge line holding `{{first_name}}` and
+  `{{last_name}}` from italicising everything between them. The guard uses plain
+  character tests rather than a lookbehind, because a lookbehind is a parse error
+  on Safari below 16.4 and this ships to a public site.
+
+  Per-product legacy rules (`STOREFRONT_MARKUP`, `CAMPAIGN_MARKUP`) keep already
+  published copy rendering exactly as it does today; they are the one part of the
+  grammar designed to be deleted, once stored content has been converted.
 ## [4.6.0] — 2026-07-30
 
 > Supersedes 4.4.0 and 4.5.0, both published mid-review. Consumers should pin
