@@ -43,6 +43,11 @@ npm i react react-dom react-router-dom @tanstack/react-query react-hook-form \
       tailwindcss @headlessui/react @heroicons/react
 ```
 
+All of those except `react` / `react-dom` are declared **optional** peers. The
+shell's components need them — a portal that drops one gets a module-not-found at
+build — but a consumer taking only `react-os-shell/markup` needs none of them, and
+`autoInstallPeers` would otherwise install the lot on its behalf.
+
 ## Quick start (~50 lines)
 
 ```tsx

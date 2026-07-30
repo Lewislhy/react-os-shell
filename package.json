@@ -93,6 +93,27 @@
     "node": ">=20"
   },
   "peerDependenciesMeta": {
+    "@headlessui/react": {
+      "optional": true
+    },
+    "@heroicons/react": {
+      "optional": true
+    },
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "axios": {
+      "optional": true
+    },
+    "react-hook-form": {
+      "optional": true
+    },
+    "react-router-dom": {
+      "optional": true
+    },
+    "tailwindcss": {
+      "optional": true
+    },
     "xlsx": {
       "optional": true
     },

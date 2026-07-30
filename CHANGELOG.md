@@ -142,6 +142,27 @@ All notable changes to this project will be documented in this file. The format 
 - The Diagnostics copy in Customization now discloses the new axes and that the
   Report button sends the log, rather than describing the removed export buttons.
 
+### Changed
+- **The UI-only peer dependencies are now declared optional** —
+  `@headlessui/react`, `@heroicons/react`, `@tanstack/react-query`, `axios`,
+  `react-hook-form`, `react-router-dom`, `tailwindcss`. Same meaning `xlsx`,
+  `pdfjs-dist`, `dxf-viewer`, `mammoth` and `online-3d-viewer` already carried:
+  not every consumer needs them. The shell's own components still require them —
+  a portal that drops one gets a module-not-found at build.
+
+  This is what makes the `/markup` subpath usable. `autoInstallPeers` is on by
+  default in pnpm, and a missing NON-optional peer is installed on the consumer's
+  behalf: taking a 5 KB text-handling module was landing 61 third-party packages
+  (headlessui, heroicons, react-router, react-hook-form, floating-ui, react-aria,
+  react-stately and their graphs) in the lockfile of a ten-dependency public
+  storefront. Measured after this change: **4 packages — react, react-dom,
+  scheduler and the shell itself, all of which the consumer already had.**
+  (`peerDependencyRules.ignoreMissing` on the consumer side does NOT fix this —
+  it silences the warning and installs them anyway. Measured: 64 → 64.)
+
+  No effect on the three portals, which all declare every one of these as a
+  direct dependency.
+
 ## [4.3.1] — 2026-07-29
 
 ### Fixed
