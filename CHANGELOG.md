@@ -163,6 +163,10 @@ All notable changes to this project will be documented in this file. The format 
   No effect on the three portals, which all declare every one of these as a
   direct dependency.
 
+  All seven are now devDependencies here too — the same pairing the five
+  already-optional peers have. npm SKIPS an optional peer, so without it this
+  package can no longer typecheck or build itself; CI caught exactly that.
+
 ## [4.3.1] — 2026-07-29
 
 ### Fixed
