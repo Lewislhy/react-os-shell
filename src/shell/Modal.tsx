@@ -424,6 +424,47 @@ function _insertModalIdForKey(modalId: string, key: string) {
   activationOrder.splice(insertAt, 0, modalId);
 }
 
+// Window keys that have been ASKED to come to the front but had no live modal
+// to raise at the time. See `requestWindowFront`.
+const _pendingFront = new Set<string>();
+
+/**
+ * Bring the window with this stable key to the front — now if it is mounted,
+ * or the moment it mounts if it is not.
+ *
+ * This is the shell's answer to "the user asked for this window", and it is
+ * deliberately the ONLY way a window rises without the user touching the
+ * window itself. Nothing about rendering reaches this function: a background
+ * window that refetches, re-renders, or receives a push cannot call it, so it
+ * cannot jump in front of whoever is typing. Somebody has to ASK.
+ *
+ * The deferred half is not an edge case, it is the common one. A window that
+ * is closed has no modal to raise, so the very first "open this" arrives
+ * before React has rendered anything — the request waits here and `mountModal`
+ * claims it below. That makes first-open and re-open one code path instead of
+ * two, which is the whole point: the second one is what used to be missing.
+ *
+ * An outstanding request is NOT spent by the first mount that honours it. It
+ * has to outlive one, because React's StrictMode mounts a tree, tears it down
+ * and mounts it again — a request consumed by the first of those would leave
+ * the window buried on the second, in development only, which is the one place
+ * anybody would look for it. It expires instead when the user puts a different
+ * window in front (see `activateModal`), or when the ask is withdrawn.
+ */
+export function requestWindowFront(windowKey: string) {
+  _pendingFront.add(windowKey);
+  const modalId = _modalIdByKey.get(windowKey);
+  if (modalId) activateModal(modalId);
+}
+
+/** Drop a front request that was never claimed — the ask was withdrawn (the
+ *  window was closed again) before anything mounted to honour it. Without this
+ *  the stale request would raise the window the NEXT time it opened for an
+ *  unrelated reason. */
+export function cancelWindowFront(windowKey: string) {
+  _pendingFront.delete(windowKey);
+}
+
 export function mountModal(modalId: string, key: string | null) {
   if (!key) {
     activationOrder.push(modalId);
@@ -438,6 +479,30 @@ export function mountModal(modalId: string, key: string | null) {
   }
   notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
+  // Honour an open request that arrived before this window existed. Must come
+  // AFTER the insert above, which deliberately slots a keyed modal back into
+  // its saved z-order — behind the active window, which for an open the user
+  // just asked for reads as "nothing happened".
+  if (key && _pendingFront.has(key)) activateModal(modalId);
+}
+
+/**
+ * Take a window out of the activation order — the counterpart of `mountModal`,
+ * called by `Modal` as it unmounts.
+ *
+ * Deliberately leaves the key in `_activationOrderKeys`: that is the SAVED
+ * order, which is what lets a window that closes and opens again come back
+ * where the user left it rather than on top of everything.
+ *
+ * Extracted from the unmount effect it used to be written inline in, so the two
+ * halves of the mapping are one symmetric pair — and so a spec can close a
+ * window without rendering one.
+ */
+export function unmountModal(modalId: string) {
+  const idx = activationOrder.indexOf(modalId);
+  if (idx !== -1) { activationOrder.splice(idx, 1); notifyActive(); }
+  const key = _keyByModalId.get(modalId);
+  if (key) { _keyByModalId.delete(modalId); _modalIdByKey.delete(key); }
 }
 
 export function activateModal(id: string) {
@@ -450,6 +515,15 @@ export function activateModal(id: string) {
     if (kidx !== -1) _activationOrderKeys.splice(kidx, 1);
     _activationOrderKeys.push(key);
     _saveOrderDebounced();
+    // Some OTHER window is now in front, so any open request still outstanding
+    // has been overtaken — the user has moved on, and honouring it later (on a
+    // remount this window did not ask for) would be the jump-in-front-of-you
+    // behaviour `requestWindowFront` exists to avoid. Only a keyed activation
+    // counts as moving on: an inline dialog raising itself at mount is part of
+    // the window it belongs to, not a different window winning focus.
+    if (_pendingFront.size) {
+      for (const pending of _pendingFront) if (pending !== key) _pendingFront.delete(pending);
+    }
   }
   notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
@@ -1411,10 +1485,7 @@ export default function Modal({ open, onClose, title, icon, copyText, size = 'lg
       modalDepthRef.dec();
       const idx = modalStack.indexOf(modalId);
       if (idx !== -1) modalStack.splice(idx, 1);
-      const aidx = activationOrder.indexOf(modalId);
-      if (aidx !== -1) { activationOrder.splice(aidx, 1); notifyActive(); }
-      const cleanupKey = _keyByModalId.get(modalId);
-      if (cleanupKey) { _keyByModalId.delete(modalId); _modalIdByKey.delete(cleanupKey); }
+      unmountModal(modalId);
       window.removeEventListener('modal-reorder', onReorder);
       window.removeEventListener('modal-split-view', onSplitView);
       window.removeEventListener('modal-center', onCenter);
