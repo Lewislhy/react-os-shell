@@ -201,6 +201,21 @@ export default function EntityList<T>(props: EntityListProps<T>) {
       a.download = exportFilename;
       a.click();
       window.URL.revokeObjectURL(url);
+      // `ids.length` is what we ASKED for, not what came back. The backend caps
+      // every list export (`MAX_EXPORT_ROWS` in efficient/mixins.py) and reports
+      // the cut on `X-Truncated` / `X-Row-Count`, where the count is the rows
+      // actually in the file. Announcing the request count without reading them
+      // states a number the file does not contain (BG#00477). Axios lowercases
+      // response header names. When the headers are absent — an older backend,
+      // or a cross-origin response that does not expose them — this falls
+      // through to the unchanged success message.
+      const headers = res.headers ?? {};
+      const rowCount = Number(headers['x-row-count']);
+      if (String(headers['x-truncated']) === 'true') {
+        const kept = Number.isFinite(rowCount) ? `${rowCount} of ${ids.length}` : `only some of the ${ids.length}`;
+        toast.notify(`Exported ${kept} rows. The server capped this export, so the file is incomplete.`);
+        return;
+      }
       toast.success(`Exported ${ids.length} ${ids.length === 1 ? 'row' : 'rows'}.`);
     } catch {
       toast.error('CSV export failed.');

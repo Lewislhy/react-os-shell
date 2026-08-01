@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.7.2] — 2026-08-01
+
+### Fixed
+- **"Export selected to CSV" reported a row count the file did not contain.** Tick
+  8,000 rows, export, and the toast said "Exported 8000 rows." over a file holding
+  5,000. The number came from `ids.length`, the selection the request was built
+  from, so it was a count of what had been asked for and never of what came back.
+  Nothing else in the response was consulted, which left the one case where the two
+  differ reading as the case where they agree.
+
+  They differ because the backend caps every list export at `MAX_EXPORT_ROWS`
+  (5,000, in `efficient/mixins.py`). A capped export is still a 200 with valid
+  `text/csv`, so there was nothing for the user to notice: the file opened, the
+  rows were real, and the missing ones were only missing. efficient-backend #1337
+  now returns `X-Truncated` and `X-Row-Count` on every export, the latter counting
+  the rows actually written. `exportSelected` reads both and, when the export was
+  cut short, says how many of the requested rows the file holds instead of
+  claiming success. The download is unchanged, including in the truncated case:
+  the partial file is still handed over.
+
+  A response carrying neither header falls through to the existing success
+  message, so a portal pinned to this version against a backend without #1337
+  behaves exactly as before. Note that the headers reach the browser only on a
+  same-origin response or one whose `Access-Control-Expose-Headers` lists them,
+  and the backend sets no `CORS_EXPOSE_HEADERS` today.
+
 ## [4.7.1] — 2026-08-01
 
 ### Fixed
