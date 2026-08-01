@@ -424,6 +424,79 @@ function _insertModalIdForKey(modalId: string, key: string) {
   activationOrder.splice(insertAt, 0, modalId);
 }
 
+/**
+ * The one outstanding "bring this window to the front" ask — a window key, or
+ * null when nothing has been asked for.
+ *
+ * There is only one front, so there is only one ask: a second one REPLACES the
+ * first, and the window the user asked for LAST is the one that rises rather
+ * than whichever of them happens to mount first, which is not something the
+ * user can see or control.
+ *
+ * The ask is SPENT by the mount that honours it. That is the whole lifetime:
+ * an ask is a single "show me this", not a standing instruction, and a flag
+ * that outlives its own fulfilment cannot be told apart from one that is still
+ * live — so the window would come forward again, minutes later, on a remount
+ * nobody asked for.
+ *
+ * Spending it immediately is safe for React's StrictMode remount (mount, tear
+ * down, mount again) even though the second mount finds nothing to claim:
+ * honouring the first one called `activateModal`, which moved this key to the
+ * top of `_activationOrderKeys` — the SAVED order that `_insertModalIdForKey`
+ * restores from. So the remount lands in front on its own, with no request
+ * left over. Verified by mutation: removing every trace of a re-claim leaves
+ * the StrictMode spec green.
+ */
+let _frontRequest: string | null = null;
+
+/**
+ * Raise the mount that is claiming the outstanding ask, and spend the ask.
+ *
+ * Cleared BEFORE the activation, so the "some other window took the front"
+ * expiry inside `activateModal` has nothing left to react to.
+ */
+function _honourFrontRequest(modalId: string) {
+  _frontRequest = null;
+  activateModal(modalId);
+}
+
+/**
+ * Bring the window with this stable key to the front — now if it is mounted,
+ * or the moment it mounts if it is not.
+ *
+ * This is the shell's answer to "the user asked for this window", and it is
+ * deliberately the ONLY way a window rises without the user touching the
+ * window itself. Nothing about rendering reaches this function: a background
+ * window that refetches, re-renders, or receives a push cannot call it, so it
+ * cannot jump in front of whoever is typing. Somebody has to ASK.
+ *
+ * The deferred half is not an edge case, it is the common one. A window that
+ * is closed has no modal to raise, so the very first "open this" arrives
+ * before React has rendered anything — the request waits here and `mountModal`
+ * claims it below. That makes first-open and re-open one code path instead of
+ * two, which is the whole point: the second one is what used to be missing.
+ *
+ * An outstanding request is SPENT by the mount that honours it — see
+ * {@link _frontRequest} for why that is safe for a StrictMode remount. It also
+ * expires unhonoured when the user puts a different window in front (see
+ * `activateModal`), or when the ask is withdrawn.
+ */
+export function requestWindowFront(windowKey: string) {
+  // A newer ask replaces an older one outright: the user asked for THIS window
+  // most recently, so this is the one that should end up in front.
+  _frontRequest = windowKey;
+  const modalId = _modalIdByKey.get(windowKey);
+  if (modalId) _honourFrontRequest(modalId);
+}
+
+/** Drop a front request that was never claimed — the ask was withdrawn (the
+ *  window was closed again) before anything mounted to honour it. Without this
+ *  the stale request would raise the window the NEXT time it opened for an
+ *  unrelated reason. */
+export function cancelWindowFront(windowKey: string) {
+  if (_frontRequest === windowKey) _frontRequest = null;
+}
+
 export function mountModal(modalId: string, key: string | null) {
   if (!key) {
     activationOrder.push(modalId);
@@ -438,6 +511,30 @@ export function mountModal(modalId: string, key: string | null) {
   }
   notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
+  // Honour an open request that arrived before this window existed. Must come
+  // AFTER the insert above, which deliberately slots a keyed modal back into
+  // its saved z-order — behind the active window, which for an open the user
+  // just asked for reads as "nothing happened".
+  if (key && _frontRequest === key) _honourFrontRequest(modalId);
+}
+
+/**
+ * Take a window out of the activation order — the counterpart of `mountModal`,
+ * called by `Modal` as it unmounts.
+ *
+ * Deliberately leaves the key in `_activationOrderKeys`: that is the SAVED
+ * order, which is what lets a window that closes and opens again come back
+ * where the user left it rather than on top of everything.
+ *
+ * Extracted from the unmount effect it used to be written inline in, so the two
+ * halves of the mapping are one symmetric pair — and so a spec can close a
+ * window without rendering one.
+ */
+export function unmountModal(modalId: string) {
+  const idx = activationOrder.indexOf(modalId);
+  if (idx !== -1) { activationOrder.splice(idx, 1); notifyActive(); }
+  const key = _keyByModalId.get(modalId);
+  if (key) { _keyByModalId.delete(modalId); _modalIdByKey.delete(key); }
 }
 
 export function activateModal(id: string) {
@@ -450,6 +547,15 @@ export function activateModal(id: string) {
     if (kidx !== -1) _activationOrderKeys.splice(kidx, 1);
     _activationOrderKeys.push(key);
     _saveOrderDebounced();
+    // Some OTHER window is now in front, so an ask still WAITING to be honoured
+    // has been overtaken — its window was slow to render, the user moved on,
+    // and letting it arrive in front now would be the jump-in-front-of-you
+    // behaviour `requestWindowFront` exists to avoid. (An ask that has already
+    // been honoured is gone by this point; it is spent on the way in.) Only a
+    // keyed activation counts as moving on: an inline dialog raising itself at
+    // mount is part of the window it belongs to, not a different window
+    // winning focus.
+    if (_frontRequest && _frontRequest !== key) _frontRequest = null;
   }
   notifyActive();
   window.dispatchEvent(new CustomEvent('modal-reorder'));
@@ -1411,10 +1517,7 @@ export default function Modal({ open, onClose, title, icon, copyText, size = 'lg
       modalDepthRef.dec();
       const idx = modalStack.indexOf(modalId);
       if (idx !== -1) modalStack.splice(idx, 1);
-      const aidx = activationOrder.indexOf(modalId);
-      if (aidx !== -1) { activationOrder.splice(aidx, 1); notifyActive(); }
-      const cleanupKey = _keyByModalId.get(modalId);
-      if (cleanupKey) { _keyByModalId.delete(modalId); _modalIdByKey.delete(cleanupKey); }
+      unmountModal(modalId);
       window.removeEventListener('modal-reorder', onReorder);
       window.removeEventListener('modal-split-view', onSplitView);
       window.removeEventListener('modal-center', onCenter);

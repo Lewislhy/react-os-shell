@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.7.0] — 2026-07-30
+
+### Fixed
+- **A window that was already open but buried did not come forward when you
+  asked for it again.** Clicking the button that opens it looked like clicking a
+  dead button: nothing moved, and the window you wanted stayed behind the one on
+  top of it.
+
+  It affected one whole kind of window — the kind that is mounted once for the
+  session and merely retargeted, rather than opened. Windows opened through
+  `WindowManager` were fine (`openEntity`/`openPage` reuse an open window and
+  raise it), and so was a keyless inline dialog (`Modal` raises a fresh mount).
+  The third kind had no path at all: asking again only changed some content, and
+  from inside the shell no content change is distinguishable from a re-render.
+  So there was nothing to raise on, and nothing did.
+
+  `createWindowTarget()` gives that kind of window a staging channel that the
+  shell owns, and `set()` on it brings the window forward — whether it was
+  closed, open and buried, or already showing the very thing you asked for.
+
+### Added
+- **`createWindowTarget(windowKey)` / `useWindowTarget(channel)`** — the staging
+  channel for a window that is mounted for the life of the session and pointed
+  at different things, replacing the `set`/`get`/`subscribe` trio each consumer
+  used to hand-write. Two behaviours come with it that the hand-written copies
+  mostly lacked: staging stamps a sequence number, so asking for the same target
+  twice is a real event rather than a no-op; and staging asks the shell to bring
+  that window forward.
+
+  The raise is emitted from `set()` and from nowhere else. There is no path from
+  rendering to raising, so a background window that refetches, re-renders or
+  receives a push cannot jump in front of you — somebody has to ask. `set(null)`
+  is a close and never raises; `set(target, { raise: false })` stages without
+  asking to be seen.
+
+- **`requestWindowFront(windowKey)`** — the same ask, imperatively, for a caller
+  outside a staging channel. Honoured immediately if that window is mounted, and
+  the moment it mounts if it is not.
+
+  An ask is a single "show me this", not a standing instruction: it is spent by
+  the mount that honours it, so a window cannot come forward a second time on a
+  remount nobody asked for. Only one ask is outstanding at a time, so if you
+  ask for two windows in a row the one you asked for LAST is the one that ends
+  up in front — not whichever of them happens to render first, which is not
+  something you can see or control. An ask that has not been honoured yet is
+  dropped as soon as you put a different window in front, or when it is
+  withdrawn.
+
+- **`unmountModal(modalId)`** — the counterpart of `mountModal`, extracted from
+  the unmount effect it was written inline in. No behaviour change; it makes the
+  pair symmetric and lets a spec close a window without rendering one.
+
+### Changed
+- A window given a `windowKey` now also has its position, size and stacking order
+  remembered under that key across a refresh — that has always been what a
+  `windowKey` does, and it now applies to this kind of window too because they
+  need a key for the shell to find them by.
+
 ## [4.6.0] — 2026-07-30
 
 > Supersedes 4.4.0 and 4.5.0, both published mid-review. Consumers should pin
