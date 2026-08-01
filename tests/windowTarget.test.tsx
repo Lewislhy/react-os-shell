@@ -39,8 +39,7 @@ import { createWindowTarget, useWindowTarget } from '../src/shell/windowTarget';
  * a deferred open request is claimed.
  */
 let seq = 0;
-function openWindow(windowKey: string) {
-  const modalId = `modal-test-${++seq}`;
+function openWindow(windowKey: string, modalId = `modal-test-${++seq}`) {
   mountModal(modalId, windowKey);
   return modalId;
 }
@@ -117,12 +116,121 @@ test('a request outlives a StrictMode remount', () => {
   // React's StrictMode mounts the tree, tears it down, and mounts it again.
   // A request spent by the first of those leaves the window buried on the
   // second — in development only, which is where anyone would look for it.
-  const firstMount = openWindow('spec-strict');
+  //
+  // Both mounts carry the SAME modalId, because `Modal` takes its id from a
+  // `useRef` and React keeps refs across the StrictMode tear-down (measured,
+  // not assumed).
+  //
+  // What actually holds this up is NOT the request surviving — the request is
+  // spent by the first mount. Honouring it called `activateModal`, which put
+  // this key at the top of the SAVED order, and the second mount is restored
+  // from that order. So the window comes back in front with nothing left
+  // outstanding, which is what lets an ask be spent immediately.
+  const strictId = 'modal-test-strict';
+  const firstMount = openWindow('spec-strict', strictId);
   assert.equal(getActiveModalId(), firstMount);
   closeWindow(firstMount);
-  const secondMount = openWindow('spec-strict');
+  const secondMount = openWindow('spec-strict', strictId);
 
   assert.equal(getActiveModalId(), secondMount, 'the second mount should still be raised');
+});
+
+test('an ask is spent, so a genuinely new mount of that window is not raised', () => {
+  reset();
+  const builder = createWindowTarget<{ mode: string }>('spec-spent');
+  closeWindow(openWindow('spec-spent'));
+
+  // The user asks, and the window rises. The ask is now satisfied.
+  builder.set({ mode: 'create' });
+  const asked = openWindow('spec-spent');
+  assert.equal(getActiveModalId(), asked, 'the ask is honoured');
+
+  // They close it from its own title bar. The host flips `open` to false and
+  // never calls `set(null)` — nothing withdraws the ask, and nothing should
+  // need to.
+  closeWindow(asked);
+
+  // Another window comes up. Note it is not ACTIVATED: a window mounting into
+  // a key the shell has not seen lands in front on its own, which is how a
+  // second window arrives in practice and why the old expiry — which ran only
+  // on activation — never fired here.
+  const otherId = openWindow('spec-spent-other');
+  assert.equal(getActiveModalId(), otherId, 'precondition: the other window is in front');
+
+  // Much later the first window remounts for a reason nobody asked for.
+  // Different mount, different id, spent ask: it must stay where it is.
+  openWindow('spec-spent');
+
+  assert.equal(getActiveModalId(), otherId, 'a spent ask must not raise a later mount');
+});
+
+test('an ask still waiting to be honoured is dropped when the user moves on', () => {
+  reset();
+  const builder = createWindowTarget<{ mode: string }>('spec-overtaken');
+  closeWindow(openWindow('spec-overtaken'));
+
+  // Asked for, but its window is still loading and has not mounted — so unlike
+  // the specs above there is no honouring here to spend the ask. This is the
+  // only case the expiry in `activateModal` still has to catch.
+  builder.set({ mode: 'create' });
+
+  // The user gives up waiting and clicks another window.
+  const otherId = openWindow('spec-overtaken-other');
+  activateModal(otherId);
+
+  // The builder finally renders, into a session that has moved on without it.
+  openWindow('spec-overtaken');
+
+  assert.equal(getActiveModalId(), otherId, 'an overtaken ask must not raise');
+});
+
+test('a quiet staging does not inherit the raise from an earlier ask', () => {
+  reset();
+  const picker = createWindowTarget<{ slot: string }>('spec-quiet-after');
+  closeWindow(openWindow('spec-quiet-after'));
+
+  picker.set({ slot: 'hero' });                 // a real ask, honoured
+  closeWindow(openWindow('spec-quiet-after'));
+
+  const otherId = openWindow('spec-quiet-after-other');
+  assert.equal(getActiveModalId(), otherId, 'precondition');
+
+  // Session restore re-stages several windows at once and asks for none of
+  // them. If the earlier ask were still outstanding, `{ raise: false }` would
+  // be honoured as a raise anyway — the option saying the exact opposite.
+  picker.set({ slot: 'hero' }, { raise: false });
+  openWindow('spec-quiet-after');
+
+  assert.equal(getActiveModalId(), otherId, 'a quiet staging must never raise');
+});
+
+test('when two windows are asked for, the one asked for LAST comes forward', () => {
+  reset();
+  const form = createWindowTarget<{ id: number }>('spec-race-form');
+  const media = createWindowTarget<{ slot: string }>('spec-race-media');
+
+  // Give both keys a saved place, with the FORM on top — so that on their own,
+  // with nothing asked for, the form is the one that mounts in front. Without
+  // this the media picker would end up in front for free and the spec would
+  // agree with a shell that ignored the second ask entirely.
+  closeWindow(openWindow('spec-race-media'));
+  const seededForm = openWindow('spec-race-form');
+  activateModal(seededForm);
+  closeWindow(seededForm);
+
+  // The user clicks "Edit form", changes their mind and clicks the media
+  // picker before either window has rendered.
+  form.set({ id: 1 });
+  media.set({ slot: 'hero' });
+
+  // The form's host happens to render first — which host wins that race is not
+  // something the user can see or control, so it must not decide what they get.
+  const formId = openWindow('spec-race-form');
+  assert.equal(getActiveModalId(), formId, 'precondition: the form is in front on its own');
+
+  const mediaId = openWindow('spec-race-media');
+
+  assert.equal(getActiveModalId(), mediaId, 'the window asked for last must be in front');
 });
 
 test('a stale request does not raise a window the user did not ask for', () => {

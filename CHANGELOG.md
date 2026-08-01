@@ -43,6 +43,15 @@ All notable changes to this project will be documented in this file. The format 
   outside a staging channel. Honoured immediately if that window is mounted, and
   the moment it mounts if it is not.
 
+  An ask is a single "show me this", not a standing instruction: it is spent by
+  the mount that honours it, so a window cannot come forward a second time on a
+  remount nobody asked for. Only one ask is outstanding at a time, so if you
+  ask for two windows in a row the one you asked for LAST is the one that ends
+  up in front — not whichever of them happens to render first, which is not
+  something you can see or control. An ask that has not been honoured yet is
+  dropped as soon as you put a different window in front, or when it is
+  withdrawn.
+
 - **`unmountModal(modalId)`** — the counterpart of `mountModal`, extracted from
   the unmount effect it was written inline in. No behaviour change; it makes the
   pair symmetric and lets a spec close a window without rendering one.
