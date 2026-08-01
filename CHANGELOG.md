@@ -14,7 +14,56 @@ to 4.4.0 resolves a real package, installs the wrong build and fails on a missin
 subpath — which reads as "the shell is broken" rather than "that version never
 shipped this code". 4.7.0 is above npm's `latest`, so it can actually publish.
 
+### Fixed
+- **A window that was already open but buried did not come forward when you
+  asked for it again.** Clicking the button that opens it looked like clicking a
+  dead button: nothing moved, and the window you wanted stayed behind the one on
+  top of it.
+
+  It affected one whole kind of window — the kind that is mounted once for the
+  session and merely retargeted, rather than opened. Windows opened through
+  `WindowManager` were fine (`openEntity`/`openPage` reuse an open window and
+  raise it), and so was a keyless inline dialog (`Modal` raises a fresh mount).
+  The third kind had no path at all: asking again only changed some content, and
+  from inside the shell no content change is distinguishable from a re-render.
+  So there was nothing to raise on, and nothing did.
+
+  `createWindowTarget()` gives that kind of window a staging channel that the
+  shell owns, and `set()` on it brings the window forward — whether it was
+  closed, open and buried, or already showing the very thing you asked for.
+
 ### Added
+- **`createWindowTarget(windowKey)` / `useWindowTarget(channel)`** — the staging
+  channel for a window that is mounted for the life of the session and pointed
+  at different things, replacing the `set`/`get`/`subscribe` trio each consumer
+  used to hand-write. Two behaviours come with it that the hand-written copies
+  mostly lacked: staging stamps a sequence number, so asking for the same target
+  twice is a real event rather than a no-op; and staging asks the shell to bring
+  that window forward.
+
+  The raise is emitted from `set()` and from nowhere else. There is no path from
+  rendering to raising, so a background window that refetches, re-renders or
+  receives a push cannot jump in front of you — somebody has to ask. `set(null)`
+  is a close and never raises; `set(target, { raise: false })` stages without
+  asking to be seen.
+
+- **`requestWindowFront(windowKey)`** — the same ask, imperatively, for a caller
+  outside a staging channel. Honoured immediately if that window is mounted, and
+  the moment it mounts if it is not.
+
+  An ask is a single "show me this", not a standing instruction: it is spent by
+  the mount that honours it, so a window cannot come forward a second time on a
+  remount nobody asked for. Only one ask is outstanding at a time, so if you
+  ask for two windows in a row the one you asked for LAST is the one that ends
+  up in front — not whichever of them happens to render first, which is not
+  something you can see or control. An ask that has not been honoured yet is
+  dropped as soon as you put a different window in front, or when it is
+  withdrawn.
+
+- **`unmountModal(modalId)`** — the counterpart of `mountModal`, extracted from
+  the unmount effect it was written inline in. No behaviour change; it makes the
+  pair symmetric and lets a spec close a window without rendering one.
+
 - **`react-os-shell/markup` — the editorial markup rule, shared.** A new subpath
   holding one grammar for authored copy: `**bold**`, `_italic_`, `~~strike~~`,
   `==highlight==`, the writer a toolbar button calls (`applyMark`), the button
@@ -46,6 +95,36 @@ shipped this code". 4.7.0 is above npm's `latest`, so it can actually publish.
   Per-product legacy rules (`STOREFRONT_MARKUP`, `CAMPAIGN_MARKUP`) keep already
   published copy rendering exactly as it does today; they are the one part of the
   grammar designed to be deleted, once stored content has been converted.
+
+### Changed
+- A window given a `windowKey` now also has its position, size and stacking order
+  remembered under that key across a refresh — that has always been what a
+  `windowKey` does, and it now applies to this kind of window too because they
+  need a key for the shell to find them by.
+
+- **The UI-only peer dependencies are now declared optional** —
+  `@headlessui/react`, `@heroicons/react`, `@tanstack/react-query`, `axios`,
+  `react-hook-form`, `react-router-dom`, `tailwindcss`. Same meaning `xlsx`,
+  `pdfjs-dist`, `dxf-viewer`, `mammoth` and `online-3d-viewer` already carried:
+  not every consumer needs them. The shell's own components still require them —
+  a portal that drops one gets a module-not-found at build.
+
+  This is what makes the `/markup` subpath usable. `autoInstallPeers` is on by
+  default in pnpm, and a missing NON-optional peer is installed on the consumer's
+  behalf: taking a 5 KB text-handling module was landing 61 third-party packages
+  (headlessui, heroicons, react-router, react-hook-form, floating-ui, react-aria,
+  react-stately and their graphs) in the lockfile of a ten-dependency public
+  storefront. Measured after this change: **4 packages — react, react-dom,
+  scheduler and the shell itself, all of which the consumer already had.**
+  (`peerDependencyRules.ignoreMissing` on the consumer side does NOT fix this —
+  it silences the warning and installs them anyway. Measured: 64 → 64.)
+
+  No effect on the three portals, which all declare every one of these as a
+  direct dependency.
+
+  All seven are now devDependencies here too — the same pairing the five
+  already-optional peers have. npm SKIPS an optional peer, so without it this
+  package can no longer typecheck or build itself; CI caught exactly that.
 ## [4.6.0] — 2026-07-30
 
 > Supersedes 4.4.0 and 4.5.0, both published mid-review. Consumers should pin
@@ -149,31 +228,6 @@ shipped this code". 4.7.0 is above npm's `latest`, so it can actually publish.
   frame rate the display never showed.
 - The Diagnostics copy in Customization now discloses the new axes and that the
   Report button sends the log, rather than describing the removed export buttons.
-
-### Changed
-- **The UI-only peer dependencies are now declared optional** —
-  `@headlessui/react`, `@heroicons/react`, `@tanstack/react-query`, `axios`,
-  `react-hook-form`, `react-router-dom`, `tailwindcss`. Same meaning `xlsx`,
-  `pdfjs-dist`, `dxf-viewer`, `mammoth` and `online-3d-viewer` already carried:
-  not every consumer needs them. The shell's own components still require them —
-  a portal that drops one gets a module-not-found at build.
-
-  This is what makes the `/markup` subpath usable. `autoInstallPeers` is on by
-  default in pnpm, and a missing NON-optional peer is installed on the consumer's
-  behalf: taking a 5 KB text-handling module was landing 61 third-party packages
-  (headlessui, heroicons, react-router, react-hook-form, floating-ui, react-aria,
-  react-stately and their graphs) in the lockfile of a ten-dependency public
-  storefront. Measured after this change: **4 packages — react, react-dom,
-  scheduler and the shell itself, all of which the consumer already had.**
-  (`peerDependencyRules.ignoreMissing` on the consumer side does NOT fix this —
-  it silences the warning and installs them anyway. Measured: 64 → 64.)
-
-  No effect on the three portals, which all declare every one of these as a
-  direct dependency.
-
-  All seven are now devDependencies here too — the same pairing the five
-  already-optional peers have. npm SKIPS an optional peer, so without it this
-  package can no longer typecheck or build itself; CI caught exactly that.
 
 ## [4.3.1] — 2026-07-29
 

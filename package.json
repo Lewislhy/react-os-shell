@@ -1,7 +1,7 @@
 {
   "name": "react-os-shell",
   "version": "4.7.0",
-  "description": "Desktop-style React UI shell \u2014 windows, taskbar, start menu, sticky notes, frosted glass theming, and bundled apps.",
+  "description": "Desktop-style React UI shell — windows, taskbar, start menu, sticky notes, frosted glass theming, and bundled apps.",
   "license": "MIT",
   "author": "Victor Y. Mau",
   "homepage": "https://github.com/victorymau/react-os-shell#readme",
