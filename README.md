@@ -43,6 +43,11 @@ npm i react react-dom react-router-dom @tanstack/react-query react-hook-form \
       tailwindcss @headlessui/react @heroicons/react
 ```
 
+All of those except `react` / `react-dom` are declared **optional** peers. The
+shell's components need them — a portal that drops one gets a module-not-found at
+build — but a consumer taking only `react-os-shell/markup` needs none of them, and
+`autoInstallPeers` would otherwise install the lot on its behalf.
+
 ## Quick start (~50 lines)
 
 ```tsx
@@ -229,6 +234,37 @@ All exports are named — `import { Modal, ... } from 'react-os-shell'`.
 | `utilityApps`, `documentApps`, `webApps` | Subsets of `bundledApps`. |
 | `Calculator`, `Spreadsheet`, `Weather`, `CurrencyConverter`, `PomodoroTimer`, `TodoList`, `Browser` | Lazy components — use directly in custom registry entries. |
 | `BUILTIN_APP_INFO` | Per-app metadata for the document/web apps (Spreadsheets, Notepad, Documents, Preview, Files, Browser): display name, independent app version and one-line description. Drives each app's "About" dialog (window title menu → About <App>), which also shows the shell version. |
+
+### Editorial markup — `react-os-shell/markup`
+
+One grammar for copy a human types into a plain text box, so a toolbar button and
+a parser can never disagree about what a delimiter means: `**bold**`, `_italic_`,
+`~~strike~~`, `==highlight==` (the brand accent, applied to a selection).
+
+**Its own subpath because it imports nothing** — no React, no JSX, no DOM, none
+of this package's peers. A public site can take the rule without inheriting a 3D
+viewer and a PDF renderer; `dist/markup/index.js` is a standalone file with zero
+import statements.
+
+What is shared is the RULE, not the rendering. A web renderer paints with
+theme-token classes and an email renderer must inline every style, so each host
+keeps its own renderer and walks the same token list.
+
+| Export | Notes |
+|---|---|
+| `applyMark(text, start, end, style)` | Pure writer behind a toolbar button — returns the new text plus where the selection should sit. Pressing the same button again unwraps. |
+| `MARKUP_TOOLS`, `COPY_FIELD_TOOLS`, `markupTools(styles)` | Button descriptors, and the four a copy field offers (bold / italic / strike / highlight). A host renders its own buttons; only the rule is shared. |
+| `tokenizeInline(value, rules)` | Parses to `InlineToken[]`. Tokens ALTERNATE, starting and ending with a `text` token that may be empty — a renderer that wraps every segment depends on the empty ones to keep its markup stable. |
+| `stripInline(value, rules)` | The plain words — the only correct source for an `alt`, an `aria-label` or a structured-data field. Deleting delimiter characters by hand breaks the moment the grammar grows a marker. |
+| `STANDARD_MARKUP` | The four marks above. |
+| `STOREFRONT_MARKUP`, `CAMPAIGN_MARKUP` | Standard plus a host's own LEGACY runs, so already-published copy keeps rendering as it does today. Designed to be deleted once stored content has been converted. |
+
+Two delimiter choices worth knowing. Italic is `_phrase_`, not `*phrase*`,
+because a single asterisk already means the accent colour in the products that
+use this. And `_` never fires inside a word (CommonMark's own rule), which is
+what stops a mail-merge line holding `{{first_name}}` and `{{last_name}}` from
+italicising everything between them — checked with plain character tests, never a
+lookbehind, which is a parse error on Safari below 16.4.
 
 ### Misc
 

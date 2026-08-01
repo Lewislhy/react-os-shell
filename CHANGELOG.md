@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [4.7.0] — 2026-07-30
 
+Numbered 4.7.0 because **4.4.0, 4.5.0 and 4.6.0 were already on npm before any of
+them was on `main`** — published from a working tree, no `gitHead`. 4.6.0 has since
+landed on `main` (the perf-report work, #94); **4.4.0 and 4.5.0 remain on npm and on
+no branch at all.** None of the three has a `./markup` subpath, so a consumer pinned
+to 4.4.0 resolves a real package, installs the wrong build and fails on a missing
+subpath — which reads as "the shell is broken" rather than "that version never
+shipped this code". 4.7.0 is above npm's `latest`, so it can actually publish.
+
 ### Fixed
 - **A window that was already open but buried did not come forward when you
   asked for it again.** Clicking the button that opens it looked like clicking a
@@ -56,12 +64,67 @@ All notable changes to this project will be documented in this file. The format 
   the unmount effect it was written inline in. No behaviour change; it makes the
   pair symmetric and lets a spec close a window without rendering one.
 
+- **`react-os-shell/markup` — the editorial markup rule, shared.** A new subpath
+  holding one grammar for authored copy: `**bold**`, `_italic_`, `~~strike~~`,
+  `==highlight==`, the writer a toolbar button calls (`applyMark`), the button
+  descriptors (`MARKUP_TOOLS`, `COPY_FIELD_TOOLS`), a tokenizer
+  (`tokenizeInline`) and the plain-text reduction every `alt` / `aria-label` /
+  structured-data field needs (`stripInline`).
+
+  It exists because two products let a human type formatted copy — the admin
+  portal (agent messages, the campaign designer) and the public storefront — and
+  until now each had invented its own delimiters. What is shared here is the
+  RULE, not the rendering: the web paints with theme-token classes, email must
+  inline every style, so each product keeps its own renderer and walks the same
+  token list.
+
+  **Its own subpath, not the barrel, on purpose.** The module imports nothing —
+  no React, no JSX, no DOM, none of this package's fourteen peers — so the
+  storefront can depend on it without inheriting a 3D viewer, a PDF renderer and
+  an xlsx parser. `dist/markup/index.js` is a standalone file with zero import
+  statements; keep it that way.
+
+  Two delimiter choices worth knowing: italic is `_phrase_` because a single
+  asterisk already means the brand accent colour in both products, on hundreds of
+  published instances; and `_` never fires inside a word (CommonMark's own rule),
+  which is what stops a mail-merge line holding `{{first_name}}` and
+  `{{last_name}}` from italicising everything between them. The guard uses plain
+  character tests rather than a lookbehind, because a lookbehind is a parse error
+  on Safari below 16.4 and this ships to a public site.
+
+  Per-product legacy rules (`STOREFRONT_MARKUP`, `CAMPAIGN_MARKUP`) keep already
+  published copy rendering exactly as it does today; they are the one part of the
+  grammar designed to be deleted, once stored content has been converted.
+
 ### Changed
 - A window given a `windowKey` now also has its position, size and stacking order
   remembered under that key across a refresh — that has always been what a
   `windowKey` does, and it now applies to this kind of window too because they
   need a key for the shell to find them by.
 
+- **The UI-only peer dependencies are now declared optional** —
+  `@headlessui/react`, `@heroicons/react`, `@tanstack/react-query`, `axios`,
+  `react-hook-form`, `react-router-dom`, `tailwindcss`. Same meaning `xlsx`,
+  `pdfjs-dist`, `dxf-viewer`, `mammoth` and `online-3d-viewer` already carried:
+  not every consumer needs them. The shell's own components still require them —
+  a portal that drops one gets a module-not-found at build.
+
+  This is what makes the `/markup` subpath usable. `autoInstallPeers` is on by
+  default in pnpm, and a missing NON-optional peer is installed on the consumer's
+  behalf: taking a 5 KB text-handling module was landing 61 third-party packages
+  (headlessui, heroicons, react-router, react-hook-form, floating-ui, react-aria,
+  react-stately and their graphs) in the lockfile of a ten-dependency public
+  storefront. Measured after this change: **4 packages — react, react-dom,
+  scheduler and the shell itself, all of which the consumer already had.**
+  (`peerDependencyRules.ignoreMissing` on the consumer side does NOT fix this —
+  it silences the warning and installs them anyway. Measured: 64 → 64.)
+
+  No effect on the three portals, which all declare every one of these as a
+  direct dependency.
+
+  All seven are now devDependencies here too — the same pairing the five
+  already-optional peers have. npm SKIPS an optional peer, so without it this
+  package can no longer typecheck or build itself; CI caught exactly that.
 ## [4.6.0] — 2026-07-30
 
 > Supersedes 4.4.0 and 4.5.0, both published mid-review. Consumers should pin

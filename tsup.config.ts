@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs';
 const pkg = JSON.parse(readFileSync('./package.json', 'utf8')) as { version: string };
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/apps/index.ts'],
+  // `src/markup` is its own entry so a consumer can take the editorial markup
+  // rule WITHOUT the shell: it imports nothing (no React, no peers), and the
+  // public storefront depends on that being provably true.
+  entry: ['src/index.ts', 'src/apps/index.ts', 'src/markup/index.ts'],
   format: ['esm'],
   dts: true,
   splitting: true,

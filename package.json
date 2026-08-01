@@ -28,6 +28,10 @@
       "types": "./dist/apps/index.d.ts",
       "import": "./dist/apps/index.js"
     },
+    "./markup": {
+      "types": "./dist/markup/index.d.ts",
+      "import": "./dist/markup/index.js"
+    },
     "./styles.css": "./dist/styles.css",
     "./themes.css": "./dist/themes.css"
   },
@@ -51,10 +55,14 @@
     "xlsx": "*"
   },
   "devDependencies": {
+    "@headlessui/react": "^2.2.10",
+    "@heroicons/react": "^2.2.0",
+    "@tanstack/react-query": "^5.100.5",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "axios": "^1.15.2",
     "dxf-viewer": "^1.0.47",
     "esbuild": "^0.27.0",
     "jsdom": "^26.1.0",
@@ -64,6 +72,9 @@
     "playwright": "^1.48.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-hook-form": "^7.74.0",
+    "react-router-dom": "^7.14.2",
+    "tailwindcss": "^4.2.4",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
     "xlsx": "^0.18.5"
@@ -89,6 +100,27 @@
     "node": ">=20"
   },
   "peerDependenciesMeta": {
+    "@headlessui/react": {
+      "optional": true
+    },
+    "@heroicons/react": {
+      "optional": true
+    },
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "axios": {
+      "optional": true
+    },
+    "react-hook-form": {
+      "optional": true
+    },
+    "react-router-dom": {
+      "optional": true
+    },
+    "tailwindcss": {
+      "optional": true
+    },
     "xlsx": {
       "optional": true
     },
