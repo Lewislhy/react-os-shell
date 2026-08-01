@@ -45,6 +45,22 @@
  *    (an intraword underscore is literal) and it is checked with plain character
  *    tests rather than a lookbehind, because a lookbehind is a parse error on
  *    Safari below 16.4 and this code ships to a public storefront.
+ *
+ * ## One KNOWN divergence from the standard named above
+ *
+ * `__phrase__` IS ITALIC HERE. CommonMark reads a doubled underscore as STRONG;
+ * this grammar has a single `_` rule, so the outer pair matches, the inner
+ * underscores are ordinary characters, and `__all__` comes back as `_all_`.
+ *
+ * Left alone deliberately, and recorded rather than fixed. A census of stored
+ * copy found 14 rows in this shape and every one of them is the literal link
+ * key `__all__`, which no renderer is handed — so nothing published is being
+ * mis-drawn today. Adding a `__` rule to buy CommonMark parity would change how
+ * a stored `_` pair parses for the benefit of no existing string, and this
+ * module's promise is that the grammar grows while nothing published moves.
+ * Bold is `**phrase**` in every product; that is the form the toolbar writes
+ * and the form to reach for. Pinned by a test, so it stays a decision rather
+ * than becoming a discovery.
  */
 
 /** A style a toolbar button can apply. The first five are inline marks; the
@@ -170,21 +186,6 @@ export const MARKUP_TOOLS: readonly MarkupTool[] = [
   { style: 'quote', label: '❝', title: 'Quote' },
 ];
 
-/**
- * The four buttons a COPY FIELD offers — a storefront section's copy box and a
- * campaign block's copy box show exactly these, so a merchant meets one toolbar
- * wherever they type. Listed here rather than per product for the obvious
- * reason: two lists would drift.
- *
- * The other five are absent on purpose. A storefront section and an email block
- * render inline runs only — no lists, no block quotes, no anchor. Offering a
- * button whose output the renderer prints as literal text is worse than not
- * offering it, so a field advertises exactly what its renderer can draw.
- */
-export const COPY_FIELD_TOOLS: readonly MarkStyle[] = [
-  'bold', 'italic', 'strike', 'highlight',
-];
-
 /** The tools a host shows, resolved to descriptors in {@link MARKUP_TOOLS}
  *  order. Keeps a host from hand-rebuilding a descriptor (and drifting on a
  *  tooltip) just to pick a subset. */
@@ -208,9 +209,21 @@ export interface InlineRule {
   /** CommonMark's `_` rule: neither delimiter may touch a word character, so
    *  `snake_case` and `{{first_name}}` stay literal. */
   readonly wordBoundary?: boolean;
-  /** A close followed by a digit does not close, so rank markers ("Ranked #1
-   *  and #2") stay literal instead of pairing up. */
-  readonly notBeforeDigit?: boolean;
+  /**
+   * Characters that may not FOLLOW the close. A run whose closing delimiter
+   * butts up against one of these does not fire, and both delimiters stay
+   * literal.
+   *
+   * Two legacy rules need it, for the same reason: a delimiter that is also
+   * ordinary punctuation will otherwise claim text that was never markup. `#`
+   * must not pair across rank markers ("Ranked #1 and #2"), and `[` must not
+   * claim the label of a markdown link ("[terms](https://…)"), where the URL
+   * would be stranded outside the run and printed to the reader.
+   *
+   * A character SET rather than a flag per case, so the next collision is one
+   * more rule field and no new branch in {@link tokenizeInline}.
+   */
+  readonly notBefore?: string;
 }
 
 /**
@@ -232,6 +245,30 @@ export const STANDARD_MARKUP: readonly InlineRule[] = [
 ];
 
 /**
+ * The buttons a COPY FIELD offers — a storefront section's copy box and a
+ * campaign block's copy box show exactly these, so a merchant meets one toolbar
+ * wherever they type.
+ *
+ * DERIVED, not listed. A copy field renders inline runs only — no lists, no
+ * block quote, no anchor — so the set it may advertise is precisely the tools
+ * whose output this grammar parses back. Writing that as a literal list was the
+ * bug's hiding place: the list and the grammar were two hand-maintained facts
+ * that agreed by luck, and nothing failed when a tool wrote a delimiter the
+ * parser read as something else. Now a style with no rule cannot appear here,
+ * whatever anyone types into the array.
+ *
+ * It resolves to bold, italic, strike and highlight. `code` is the one that
+ * surprises: it is an inline mark and it has a fence, but no rule reads a
+ * backtick, so a copy field would print `` `word` `` verbatim — and a button
+ * whose output the renderer draws as literal text is worse than no button.
+ *
+ * Declared here, below the rules, because it now depends on them.
+ */
+export const COPY_FIELD_TOOLS: readonly MarkStyle[] = MARKUP_TOOLS
+  .map((tool) => tool.style)
+  .filter((style) => STANDARD_MARKUP.some((rule) => rule.kind === style));
+
+/**
  * The storefront's rule set: standard markdown plus the ONE legacy run it has
  * published — `*phrase*` in the theme accent. Delete that last entry once
  * stored copy has been converted to `==phrase==`; both kinds already paint the
@@ -247,12 +284,21 @@ export const STOREFRONT_MARKUP: readonly InlineRule[] = [
  * runs — `#phrase#` bold, `*phrase*` accent, `[phrase]` italic. The bold guard
  * is the one the email parser already carried: a `#` followed by a digit does
  * not close a run, so "Ranked #1 and #2" is literal while "Save #20%#" bolds.
+ *
+ * The italic guard exists because `[phrase]` collides with the one piece of
+ * markdown syntax every writer already knows. Without it, "Read [our
+ * terms](https://…) first" italicises the label AND prints the bare URL to the
+ * reader — the words come back wearing a mark nobody chose. It is not a
+ * toolbar problem: a merchant typing an ordinary link into a copy box hits it,
+ * which is why the guard is on the RULE and not on which buttons a field
+ * offers. `[phrase]` on its own is untouched, so every published line still
+ * reads exactly as it did.
  */
 export const CAMPAIGN_MARKUP: readonly InlineRule[] = [
   ...STANDARD_MARKUP,
   { open: '*', close: '*', kind: 'accent' },
-  { open: '#', close: '#', kind: 'bold', notBeforeDigit: true },
-  { open: '[', close: ']', kind: 'italic' },
+  { open: '#', close: '#', kind: 'bold', notBefore: '0123456789' },
+  { open: '[', close: ']', kind: 'italic', notBefore: '(' },
 ];
 
 /** A parsed run. `text` is the inner text with the delimiters removed, so a
@@ -325,7 +371,7 @@ function matchAt(value: string, i: number, rules: readonly InlineRule[]) {
 
     const end = closeAt + rule.close.length;
     const next = value[end];
-    if (rule.notBeforeDigit && next !== undefined && next >= '0' && next <= '9') continue;
+    if (rule.notBefore && next !== undefined && rule.notBefore.includes(next)) continue;
     if (rule.wordBoundary && next !== undefined && wordish(next)) continue;
 
     return { rule, inner, end };

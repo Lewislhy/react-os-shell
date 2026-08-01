@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.8.0] — 2026-08-01
+
+### Fixed
+- **A markdown link in campaign copy lost its label and printed its URL.** Type
+  `Read [our terms](https://example.com/terms) first` into any campaign copy box
+  and the reader got *our terms* in italics followed by the bare URL in the
+  running text. The campaign's legacy `[phrase]` italic — one of the three rules
+  it carries so already-published copy keeps rendering — was claiming the label
+  of the one piece of markdown syntax every writer already knows, and the URL
+  was left stranded outside the run.
+
+  This did not need the toolbar to reach. A merchant typing an ordinary link hit
+  it, which is why the guard is on the RULE and not on which buttons a field
+  offers: `[` no longer closes when its `]` is met immediately by `(`. A
+  `[phrase]` on its own is untouched, so every published line reads exactly as
+  it did.
+
+  `applyMark(…, 'link')` writes that same shape, so the writer and the parser
+  were disagreeing about a delimiter — the one thing this module exists to
+  prevent. `MARKUP_TOOLS` ships the link button with a ⌘K shortcut, so it was
+  one prop away from any host that renders inline runs.
+
+### Changed
+- **`COPY_FIELD_TOOLS` is derived from the grammar instead of listed.** It was a
+  hand-written array that agreed with the parse rules by luck; a style with no
+  rule can no longer appear in it. The value is unchanged — bold, italic, strike,
+  highlight — and `code` is still absent, now because no rule reads a backtick
+  rather than because someone remembered to leave it out.
+- **`InlineRule.notBeforeDigit` is now `InlineRule.notBefore`,** a set of
+  characters that may not follow the close. Two legacy rules need this guard for
+  the same reason (`#` against rank markers, `[` against link targets), and a
+  boolean per case would have meant a new branch in the tokenizer each time.
+  Behaviour for `#` is unchanged and pinned by the tests that already covered it.
+  Exported for completeness rather than use: the rule sets this module ships are
+  the supported way to parse, and no consumer builds its own.
+
+### Testing
+- The guard that should have caught the link collision walked `COPY_FIELD_TOOLS`
+  — the four tools already known to be safe — so it could not have found a
+  writer/parser disagreement even in principle. It now walks every tool in
+  `MARKUP_TOOLS` against every product rule set, asserting that no button's
+  output is ever re-read as a mark nobody chose. A tool the grammar leaves
+  literal still passes: backticks print as typed, which is visible but honest.
+- `__phrase__` is italic here, not CommonMark's strong. Documented in the
+  module header and pinned by a test — a recorded divergence, not a defect.
+
 ## [4.7.2] — 2026-08-01
 
 ### Fixed
