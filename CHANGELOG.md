@@ -26,6 +26,15 @@ All notable changes to this project will be documented in this file. The format 
   prevent. `MARKUP_TOOLS` ships the link button with a ⌘K shortcut, so it was
   one prop away from any host that renders inline runs.
 
+- **`react-os-shell/markup` could not be resolved by a CJS resolver.** The
+  subpath declared only `types` and `import`, so anything reaching it through
+  Node's CJS loader — a `tsx` build script, for one — failed with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED`, which reads like a missing file rather than a
+  missing condition. It now carries `default` as well, pointing at the same
+  file. The root and `./apps` deliberately keep `import` only: they are React
+  component entries, and a bundler is the only thing that should be resolving
+  them. This module is the portable one, and it is consumed by build scripts.
+
 ### Changed
 - **`COPY_FIELD_TOOLS` is derived from the grammar instead of listed.** It was a
   hand-written array that agreed with the parse rules by luck; a style with no

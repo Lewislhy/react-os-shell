@@ -11,6 +11,16 @@
  * therefore adds a few hundred bytes of first-party code to a bundle and nothing
  * else — see the subpath's own tsup entry.
  *
+ * It is also the ONE subpath whose `exports` entry carries a `default`
+ * condition alongside `import`, and that is deliberate rather than untidy. The
+ * root and `./apps` are React component entries; a bundler resolves them and
+ * nothing else has any business to. This module is consumed by build scripts
+ * too — the storefront's media-manifest generator reaches it through its Puck
+ * config — and those run under `tsx`, which resolves through Node's CJS
+ * loader. With only `types` and `import` declared, that resolution fails with
+ * ERR_PACKAGE_PATH_NOT_EXPORTED, which reads like a missing file rather than a
+ * missing condition. A module this portable should answer to any resolver.
+ *
  * WHAT IS SHARED IS THE RULE, NOT THE RENDERING. Each product renders the token
  * list its own way, because it must: the web uses CSS classes bound to theme
  * tokens, email must inline every style (mail clients drop classes). Two

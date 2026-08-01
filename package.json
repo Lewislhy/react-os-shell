@@ -30,7 +30,8 @@
     },
     "./markup": {
       "types": "./dist/markup/index.d.ts",
-      "import": "./dist/markup/index.js"
+      "import": "./dist/markup/index.js",
+      "default": "./dist/markup/index.js"
     },
     "./styles.css": "./dist/styles.css",
     "./themes.css": "./dist/themes.css"
