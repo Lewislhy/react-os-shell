@@ -3,13 +3,16 @@ import assert from 'node:assert/strict';
 import {
   applyMark,
   markupTools,
+  MARKUP_TOOLS,
   COPY_FIELD_TOOLS,
   STANDARD_MARKUP,
   STOREFRONT_MARKUP,
   CAMPAIGN_MARKUP,
   tokenizeInline,
   stripInline,
+  type InlineRule,
   type InlineToken,
+  type MarkStyle,
 } from '../src/markup';
 
 /**
@@ -75,18 +78,109 @@ test('a copy field offers exactly four buttons, in toolbar order', () => {
   );
 });
 
-test('no copy-field button writes something an inline renderer cannot draw', () => {
-  // A link or a list prefix would print literally in a storefront section and
-  // in an email block, so the four must all be inline marks the grammar parses.
-  const kinds = new Set(STANDARD_MARKUP.map((r) => r.kind));
-  for (const style of COPY_FIELD_TOOLS) {
-    assert.ok(kinds.has(style as never), `${style} has no parse rule`);
+/** Every rule set a product actually parses authored copy with. */
+const PRODUCT_RULES: readonly (readonly [string, readonly InlineRule[]])[] = [
+  ['storefront', STOREFRONT_MARKUP],
+  ['campaign', CAMPAIGN_MARKUP],
+];
+
+/** The runs a parser finds, minus the empty text tokens that pad the list. */
+const runs = (value: string, rules: readonly InlineRule[]) =>
+  tokenizeInline(value, rules).filter((t) => t.text !== '');
+
+/** What the toolbar types when a writer selects one word and presses `style`. */
+const written = (style: MarkStyle) => applyMark('word', 0, 4, style).text;
+
+test('no toolbar button is silently re-read as a mark nobody asked for', () => {
+  // SCOPE IS THE POINT. The guard this replaces walked COPY_FIELD_TOOLS — the
+  // four already known to be safe — so it could not have found a writer/parser
+  // disagreement even in principle: right shape, wrong set. The surface is
+  // every tool a host can be handed, because MARKUP_TOOLS ships the link button
+  // with a ⌘K shortcut and one prop is all that separates a copy field from it.
+  //
+  // A tool the grammar leaves LITERAL passes here on purpose. Backticks, or a
+  // "- " prefix, print as typed: visible, but honest, and the author's words
+  // survive. What must never happen is those words coming back wearing a mark
+  // nobody chose — that is silent corruption, and it is what `[label](url)` did
+  // under the campaign's legacy `[phrase]` italic.
+  for (const tool of MARKUP_TOOLS) {
+    const out = written(tool.style);
+    for (const [product, rules] of PRODUCT_RULES) {
+      for (const token of runs(out, rules)) {
+        if (token.kind === 'text') continue;
+        assert.equal(
+          token.kind,
+          tool.style,
+          `${product}: the ${tool.style} button writes ${JSON.stringify(out)}, `
+            + `which parses as ${token.kind}:${token.text}`,
+        );
+      }
+    }
   }
+});
+
+test('the copy-field set is exactly the tools that survive a round trip', () => {
+  // COPY_FIELD_TOOLS is DERIVED in the source, from which standard marks have a
+  // parse rule — a name comparison. This recomputes it the other way, by
+  // actually writing with each button and reading the result back, so the two
+  // halves of the grammar have to agree about the set as well as the
+  // delimiters. Deriving it from behaviour here is what stops this from being a
+  // list that merely repeats the source's list.
+  const survives = (style: MarkStyle) =>
+    PRODUCT_RULES.every(([, rules]) => {
+      const r = runs(written(style), rules);
+      return r.length === 1 && r[0].kind === style && r[0].text === 'word';
+    });
+
+  assert.deepEqual(
+    MARKUP_TOOLS.filter((t) => survives(t.style)).map((t) => t.style),
+    [...COPY_FIELD_TOOLS],
+  );
 });
 
 // ── 2. The reader ──────────────────────────────────────────────────────────
 
 const kinds = (t: InlineToken[]) => t.map((x) => `${x.kind}:${x.text}`);
+
+test('a markdown link in campaign copy keeps its words and its URL', () => {
+  // Reachable by TYPING, with no toolbar in sight: `[phrase]` is the campaign's
+  // legacy italic, and it used to swallow the label of any ordinary markdown
+  // link — italicising the words and printing the bare URL to the reader.
+  const typed = 'Read [our terms](https://example.com/terms) first';
+  assert.deepEqual(kinds(tokenizeInline(typed, CAMPAIGN_MARKUP)), [`text:${typed}`]);
+  assert.equal(stripInline(typed, CAMPAIGN_MARKUP), typed);
+});
+
+test('the legacy [phrase] italic still fires on everything else', () => {
+  // The guard is narrow on purpose — only a `]` met immediately by `(` backs
+  // off. Every published `[phrase]` must read exactly as it always has.
+  assert.deepEqual(
+    kinds(tokenizeInline('a [b] c', CAMPAIGN_MARKUP)),
+    ['text:a ', 'italic:b', 'text: c'],
+  );
+  // A space between the two is not a link, so the run still fires.
+  assert.deepEqual(
+    kinds(tokenizeInline('[b] (c)', CAMPAIGN_MARKUP)),
+    ['text:', 'italic:b', 'text: (c)'],
+  );
+});
+
+test('`__phrase__` is ITALIC here, not CommonMark strong', () => {
+  // A deliberate, documented divergence from the "standard markdown" this
+  // module claims — see the header. One `_` rule means the OUTER pair matches
+  // and the inner underscores are ordinary characters. The 14 stored rows in
+  // this shape are all the literal link key `__all__`, none of which reaches a
+  // renderer, so the behaviour is recorded rather than changed. This test
+  // exists to keep it a decision instead of a discovery.
+  assert.deepEqual(
+    kinds(tokenizeInline('__all__', STANDARD_MARKUP)),
+    ['text:_', 'italic:all', 'text:_'],
+  );
+  assert.equal(stripInline('__all__', STANDARD_MARKUP), '_all_');
+  // Bold is the double ASTERISK, in every product, and that is what the
+  // toolbar writes.
+  assert.equal(applyMark('all', 0, 3, 'bold').text, '**all**');
+});
 
 test('tokens alternate and start and end with text, even when empty', () => {
   // The storefront wraps EVERY segment in a span, empty ones included, so this
