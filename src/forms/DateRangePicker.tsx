@@ -14,8 +14,11 @@
  * is injected via `formatDisplay` so each portal can honour its own user
  * date-format preference, and the value contract is the plain `YYYY-MM-DD` the
  * API filters on.
+ *
+ * The panel is placed against whatever box CLIPS it rather than against a fixed
+ * edge — see `clipBounds` below and the alignment effect in the component.
  */
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useLayoutEffect } from 'react';
 import { glassStyle } from '../utils/glass';
 import useClickOutside from '../hooks/useClickOutside';
 
@@ -50,6 +53,36 @@ const YEARS_PER_PAGE = 12;
 const yearPageStart = (y: number) => Math.floor(y / YEARS_PER_PAGE) * YEARS_PER_PAGE;
 
 const pad = (n: number) => String(n).padStart(2, '0');
+
+/** Clear space kept between the panel and the edge it stops at. */
+const EDGE_MARGIN = 8;
+
+/**
+ * The box the open panel has to stay inside.
+ *
+ * The nearest ancestor that clips horizontally, falling back to the viewport
+ * when nothing on the way up does. The distinction matters: a shell window's
+ * body is `overflow-hidden`, so a panel that hangs past its edge is not merely
+ * off to one side, it is *gone* — there is nothing to scroll and resizing the
+ * window does not bring it back, because the trigger moves with the edge.
+ *
+ * jsdom, and a container the browser has not laid out yet, both report a rect
+ * of zeros; that says nothing about where the panel may go, so keep walking.
+ */
+function clipBounds(el: HTMLElement): { left: number; right: number } {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    // jsdom does not expand the `overflow` shorthand into `overflow-x`, and
+    // `overflow-hidden` is how every clipping surface in the shell spells it.
+    // A browser always resolves `overflowX`, so the fallback is inert there.
+    const overflowX = style.overflowX || style.overflow;
+    if (overflowX && overflowX !== 'visible') {
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0) return { left: rect.left, right: rect.right };
+    }
+  }
+  return { left: 0, right: window.innerWidth };
+}
 
 /**
  * Serialise a Date to `YYYY-MM-DD`, reading its LOCAL calendar fields.
@@ -88,6 +121,9 @@ export default function DateRangePicker({
   const [tempTo, setTempTo] = useState(to);
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Which edge of the trigger the panel hangs from.
+  const [align, setAlign] = useState<'left' | 'right'>('left');
 
   const now = new Date();
   const [month, setMonth] = useState(from ? parseDate(from).getMonth() : now.getMonth());
@@ -102,6 +138,45 @@ export default function DateRangePicker({
   const displayDate = (s: string) => (s ? formatDisplay(s) : '');
 
   useClickOutside(ref, useCallback(() => { if (open) setOpen(false); }, [open]));
+
+  /**
+   * Hang the panel off whichever edge of the trigger leaves it on screen.
+   *
+   * It used to be pinned to `right: 0`, which suits a trigger sitting at the
+   * right of a list toolbar and ruins one sitting at the left: the panel grows
+   * leftward, past the edge of the shell window, and the From box, the
+   * month/year header and the previous-month arrow are simply not there. So
+   * left-align by default, since a filter bar reads left to right and its first
+   * control has the whole width to open into, and keep the old right-alignment
+   * for the case it was protecting — a trigger with no room to its right.
+   *
+   * The width is measured, not assumed: the presets column is `min-w-[130px]`,
+   * a MINIMUM, so the real width follows the longest preset label at whatever
+   * font size the reader has. Ancestor clipping does not affect an element's
+   * own rect, so this reads true even while the panel is being cut off.
+   *
+   * Runs in a layout effect, so the correction lands in the same paint as the
+   * open and nothing flashes. Re-measuring on resize is what makes maximising
+   * the window do something, which is the first thing anyone tries.
+   */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const anchor = ref.current, panel = panelRef.current;
+      if (!anchor || !panel) return;
+      const trigger = anchor.getBoundingClientRect();
+      const width = panel.getBoundingClientRect().width;
+      const bounds = clipBounds(anchor);
+      const fitsLeftAligned = trigger.left + width <= bounds.right - EDGE_MARGIN;
+      const fitsRightAligned = trigger.right - width >= bounds.left + EDGE_MARGIN;
+      // When neither fits — a container narrower than the panel itself — left
+      // wins, because the half worth keeping is the one with the dates in it.
+      setAlign(fitsLeftAligned || !fitsRightAligned ? 'left' : 'right');
+    };
+    place();
+    window.addEventListener('resize', place);
+    return () => window.removeEventListener('resize', place);
+  }, [open]);
 
   const handleOpen = () => {
     setTempFrom(from);
@@ -256,7 +331,8 @@ export default function DateRangePicker({
       </div>
 
       {open && (
-        <div className="absolute z-50 mt-1 rounded-2xl p-4" style={{ right: 0, ...glassStyle() }}>
+        <div ref={panelRef} role="dialog" aria-label="Date range" className="absolute z-50 mt-1 rounded-2xl p-4"
+          style={{ ...(align === 'right' ? { right: 0 } : { left: 0 }), ...glassStyle() }}>
           {/* From/To display */}
           <div className="flex items-center gap-3 mb-3">
             <div className="flex items-center gap-2">

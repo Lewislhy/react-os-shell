@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.8.1] — 2026-08-03
+
+### Fixed
+- **The date-range panel opened off the edge of the window when its trigger sat
+  near the left.** "In the Customer's account statement: if I chose custom in
+  the date range, the view is only the half portion. I can't select properly the
+  date that I want." Half the calendar was missing: the From box, the month and
+  year buttons and the previous-month arrow, with only the Fr and Sa columns
+  left. Nothing brought them back, because the panel was pinned to `right: 0`
+  and so always grew leftward, out of a shell window body that is
+  `overflow-hidden`. There is nothing to scroll to an overhang there, and
+  maximising the window moves the trigger along with the edge it is pinned to,
+  which is why the reporter's two workarounds both failed.
+
+  The panel now hangs off whichever edge of the trigger leaves it inside the
+  box that clips it: left by default, since a filter bar reads left to right and
+  its first control has the full width to open into, and right when there is no
+  room that way. That second case is what the old `right: 0` was there for, a
+  trigger at the far end of a list toolbar, and it still behaves exactly as it
+  did.
+
+  The bound is the nearest ancestor that clips horizontally rather than the
+  viewport, because a shell window is the thing doing the cutting and it is
+  narrower than the screen. The panel's width is measured rather than assumed:
+  the presets column carries a `min-w-[130px]` MINIMUM, so the real width
+  follows the longest preset label at the reader's font size.
+
+  This is not the two statement tabs only. Any trigger closer to the clipping
+  edge than the panel is wide was affected, which includes the customer and
+  supplier production-progress filter bars, where the picker follows a `w-56`
+  search box and renders the short "Date Range" placeholder until a range is
+  set.
+
+### Added
+- **The open date-range panel is a `dialog`.** The trigger has always said
+  `aria-haspopup="dialog"`; there was no dialog on the other end of that claim.
+
 ## [4.8.0] — 2026-08-01
 
 ### Fixed
