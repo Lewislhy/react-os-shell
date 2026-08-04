@@ -253,6 +253,7 @@ export default function Sidebar({
             {items.map(it => renderNestedItem(it))}
           </div>
         )}
+        {'dividerAfter' in section && section.dividerAfter && <div className="border-t border-white/20 my-1.5 mx-2" />}
       </div>
     );
   };

@@ -22,6 +22,12 @@ export interface NavSection {
   /** Optional landing route for clicks on the section title itself
    *  (e.g. R&D's `/rd` dashboard). */
   to?: string;
+  /** Draw a divider under this section's row, so a consumer can split one
+   *  flat group into visual bands (e.g. an operator console pinned above the
+   *  ERP sections). Same knob as `NavItem.dividerAfter`, and drawn INSIDE the
+   *  section's wrapper so it stays below the row in the `flex-col-reverse`
+   *  Start menu a side/top taskbar renders. */
+  dividerAfter?: boolean;
 }
 
 export interface VirtualSection {

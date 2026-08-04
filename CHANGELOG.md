@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.9.0] — 2026-08-04
+
+### Added
+- **A nav section can draw a divider under itself.** `NavSection.dividerAfter`,
+  the same knob `NavItem` already carried, so a consumer can split one flat
+  group into visual bands — pinning an operator-only console above the ERP
+  sections and separating it from them, rather than having it read as just
+  another one of them.
+
+  Honoured by both nav surfaces: the Start menu's ERP group and the Sidebar's
+  section accordions. The line is drawn INSIDE the section's wrapper element,
+  not as a sibling, because the Start menu renders `flex-col-reverse` for a
+  side or top taskbar — a sibling divider would flip to above the row there,
+  while a nested one stays below it in every taskbar position. This is why
+  `NavItem.dividerAfter` is nested too.
+
 ## [4.8.1] — 2026-08-03
 
 ### Fixed

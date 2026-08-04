@@ -347,6 +347,7 @@ export default function StartMenu({
           <span className={isErp ? 'font-medium' : ''}>{section.label}</span>
           <svg className="h-3.5 w-3.5 ml-auto text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
         </button>
+        {section.dividerAfter && <div className="border-t border-white/20 my-1.5 mx-2" />}
       </div>
     );
   };
