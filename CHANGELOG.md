@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 
+## [4.14.0] — 2026-09-11
+
+### Added
+- **One right-click menu everywhere in the shell — `ShellContextMenu`.**
+  Right-click was a patchwork: fourteen surfaces in this package (and
+  twenty-five more in the admin portal) drew their own menu, and everywhere
+  else Chrome's native menu came up, which reads as a hole in a desktop OS.
+  `Layout` now mounts `ShellContextMenu`, a single `contextmenu` listener on
+  the document that fills the gaps.
+
+  None of the existing handlers were touched, and none needed to be: every one
+  of them calls `preventDefault()`, so the global listener sees
+  `defaultPrevented` and stands down. The specific menu still wins wherever
+  there is one.
+
+  The menu is drawn with the same `PopupMenu` as every other menu in the shell,
+  and its items follow what was clicked — Copy for a selection, Open / Copy
+  link address for a link, Open / Copy image address for an image — over a
+  Back / Forward / Reload / Copy page address section that is always present.
+
+  Two deliberate exemptions:
+  - **Text inputs, textareas and contenteditable keep Chrome's own menu.** Its
+    spellcheck suggestions and "Add to dictionary" cannot be rebuilt by us, and
+    a Paste item of our own would need a clipboard permission prompt.
+  - **Shift+right-click anywhere reaches Chrome's real menu**, so "Inspect" is
+    still one gesture away.
+
+  A consumer can opt a subtree out with `data-native-context-menu` (an embedded
+  viewer, a third-party widget), or turn the menu off entirely with
+  `<ShellContextMenu disabled />`. `keepsNativeMenu` and
+  `describeContextTarget` are exported for a consumer that wants the same
+  decisions in its own handler.
+
+### Fixed
+- **The widget settings dialog no longer leaks Chrome's native menu.** Its
+  wrapper stopped `contextmenu` from propagating — so the widget underneath
+  would not open its own menu — but never prevented the default, which left
+  the browser menu showing. It was the one handler in the package that did not
+  call `preventDefault()`. It does now.
+
 ## [4.13.1] — 2026-08-09
 
 ### Fixed
